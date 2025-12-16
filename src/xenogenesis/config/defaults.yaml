@@ -1,0 +1,30 @@
+seed: 123
+environment:
+  gravity: 9.81
+  temperature: 295.0
+  radiation: 0.05
+  resource_regen: 0.05
+ca:
+  grid_size: 256
+  mu: 0.15
+  sigma: 0.015
+  dt: 0.1
+  inner_radius: 3.0
+  outer_radius: 6.0
+  ring_ratio: 0.5
+  steps: 256
+  record_interval: 8
+  render_stride: 4
+  render_cmap: magma
+  novelty_enabled: false
+evolution:
+  population: 64
+  generations: 40
+  selection: nsga2
+  mutation_rate: 0.1
+  workers: 4
+  checkpoint_interval: 5
+outputs:
+  run_dir: runs
+  render: true
+  archive_limit: 1000

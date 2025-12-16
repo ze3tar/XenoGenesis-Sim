@@ -1,31 +1,35 @@
 # AGENTS.md for XenoGenesis-Sim
 
-This file provides **structured instructions for coding agents** (e.g., GitHub Copilot coding agent, CLI-based AI tools, etc.) to work effectively on the XenoGenesis-Sim repository.  
-This document supplements `README.md` by giving agents actionable commands, boundaries, technical context, and conventions tailored to this project. :contentReference[oaicite:1]{index=1}
+This file contains **mandatory instructions for any coding agent** working in this repository. Its scope is the entire project.
 
----
+## Mission
+XenoGenesis-Sim is a Linux-first artificial life playground combining digital organisms, continuous cellular automata, and soft-body evolution. Maintain clear documentation, modular code, and reproducible workflows.
 
-## Project Overview
+## Coding conventions
+- Prefer Python 3.9+ features; include type hints and docstrings for new public functions.
+- Keep modules small and composable; avoid deep inheritance.
+- Favor explicit configuration objects over magic constants. Add default values in a central config when possible.
+- Never wrap imports in try/except.
+- When touching existing code, preserve current logging and argument patterns unless there is a clear bug.
 
-XenoGenesis-Sim is a **Linux-compatible artificial life and evolutionary simulation platform** that models digital organisms under arbitrary planetary conditions.  
-Agents should understand that the goal is to:
-- Build, test, and evolve simulation modules
-- Maintain modular evolutionary substrates (e.g., digital genomes, continuous cellular automata, soft-body physics, neural evolution)
-- Ensure reproducibility, documentation, and rigorous test coverage
+## Demo and deliverable expectations
+- The README must always describe the one-command demo (`make demo`) that builds native code, installs the editable package, runs a CA simulation, saves outputs (plots + Parquet/JSON), and prints a summary table.
+- Keep `scripts/run_demo.sh` and `Makefile` targets in sync with documented behavior; highlight checkpoint/resume/analyze flows when touched.
 
----
+## Documentation expectations
+- Update README.md when user-facing behavior or project scope changes.
+- Add inline comments only where they clarify non-obvious logic.
+- Include short module-level summaries for new files.
 
-## Environment Setup
+## Testing
+- Run relevant fast checks. At minimum, run `python -m compileall src examples` after modifying Python code.
+- List every command you ran in the final response under **Testing**.
 
-### Required Tools
-Agents should assume the following tools are installed and used:
-```bash
-# Base development tools
-sudo apt update && sudo apt install -y build-essential cmake git python3 python3-pip
+## Git and PR guidance
+- Keep commits focused; do not mix unrelated changes.
+- After committing, call the `make_pr` tool with a succinct title and body summarizing the change and tests.
+- Do not fabricate test results; report failures or limitations honestly.
 
-# Python and dependencies
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
-
-# Example Python tooling
-pip install pytest black flake8
+## Communication
+- Follow the system/developer/user message ordering. If instructions conflict, the higher-priority source wins.
+- Be concise but explicit in the final summary. Include file path citations per the system format.
