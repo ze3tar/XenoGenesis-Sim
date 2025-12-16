@@ -35,7 +35,7 @@ build-dir = "build"
 install.components = ["python"]
 
 [tool.scikit-build.cmake]
-version = "3.18"
+version = ">=3.18"
 
 [tool.scikit-build.build]
 parallel = true
