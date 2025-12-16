@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.7", "pybind11>=2.10", "numpy", "setuptools", "wheel"]
+requires = ["scikit-build-core>=0.9.1", "pybind11>=2.10", "numpy", "setuptools", "wheel"]
 build-backend = "scikit_build_core.build"
 
 [project]
