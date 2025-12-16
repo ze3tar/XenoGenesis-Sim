@@ -39,7 +39,7 @@ minimum-version = "3.18"
 parallel = true
 verbose = false
 
-[tool.scikit-build.generate]
+[[tool.scikit-build.generate]]
 cmake = true
 
 [tool.cibuildwheel]
