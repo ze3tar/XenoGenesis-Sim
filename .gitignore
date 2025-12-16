@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.env/
+.vscode/
+__pypackages__/
+run*/
+cmake-build*/
+*.mp4
+*.gif
+*.png
+.idea/

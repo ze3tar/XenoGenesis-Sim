@@ -1,0 +1,16 @@
+from xenogenesis.config import ConfigSchema
+from xenogenesis.engine.sim_runner import run_ca
+from pathlib import Path
+import pandas as pd
+import shutil
+
+def test_deterministic_run(tmp_path):
+    cfg = ConfigSchema()
+    cfg.outputs.run_dir = tmp_path / "runs"
+    cfg.ca.steps = 4
+    first = run_ca(cfg)
+    df1 = pd.read_parquet(first / "metrics.parquet")
+    shutil.rmtree(first)
+    second = run_ca(cfg)
+    df2 = pd.read_parquet(second / "metrics.parquet")
+    assert df1.equals(df2)
