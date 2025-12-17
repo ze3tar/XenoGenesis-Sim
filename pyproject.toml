@@ -1,15 +1,22 @@
 [build-system]
-requires = ["scikit-build-core>=0.9.1", "pybind11>=2.10", "numpy", "setuptools", "wheel"]
+requires = [
+  "scikit-build-core>=0.9.1",
+  "pybind11>=2.10",
+  "numpy",
+  "setuptools",
+  "wheel"
+]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "xenogenesis-sim"
 version = "0.1.0"
-authors = [{name = "XenoGenesis Team"}]
+authors = [{ name = "XenoGenesis Team" }]
 description = "Alien evolution sandbox with CA, soft-body, and digital substrates"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
+
 dependencies = [
   "typer>=0.9",
   "numpy>=1.24",
@@ -22,6 +29,7 @@ dependencies = [
   "ffmpeg-python>=0.2",
   "rich>=13.0",
 ]
+
 [project.optional-dependencies]
 evogym = ["evogym>=1.0"]
 neat = ["neat-python>=0.92"]
@@ -30,15 +38,11 @@ neat = ["neat-python>=0.92"]
 xenogenesis = "xenogenesis.cli:app"
 
 [tool.scikit-build]
-wheel.expand-macos-universal-tags = true
-build-dir = "build"
+build-dir = "build/{wheel_tag}"
 install.components = ["python"]
 
 [tool.scikit-build.cmake]
 version = ">=3.18"
-
-[tool.scikit-build.build]
-verbose = false
 
 [tool.cibuildwheel]
 skip = "pp* *musllinux*"
