@@ -5,17 +5,17 @@ environment:
   radiation: 0.05
   resource_regen: 0.05
 ca:
-  grid_size: 256
+  grid_size: 128
   mu: 0.15
-  sigma: 0.015
-  dt: 0.1
-  inner_radius: 3.0
-  outer_radius: 6.0
-  ring_ratio: 0.5
-  steps: 256
-  record_interval: 8
-  render_stride: 4
-  render_cmap: magma
+  sigma: 0.04
+  dt: 0.045
+  inner_radius: 4.0
+  outer_radius: 12.0
+  ring_ratio: 0.55
+  steps: 600
+  record_interval: 1
+  render_stride: 1
+  render_cmap: inferno
   novelty_enabled: false
 evolution:
   population: 64

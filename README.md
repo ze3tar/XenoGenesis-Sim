@@ -70,7 +70,7 @@ The CA follows a Lenia/SmoothLife-style continuous update rule:
 - **Energy efficiency**: complexity scaled by a penalty on excess mass.
 - **Behavior descriptor**: `[entropy, edge_density, com_speed, energy_period]` for novelty/archive use.
 
-Frame-level metrics (entropy, edge density, active fraction) are stored alongside summary objectives in `metrics.parquet`, plotted in `plots/fitness.png`, and rendered on top of MP4 frames.
+Frame-level metrics (entropy, edge density, active fraction) are stored alongside summary objectives in `metrics.csv`, plotted in `plots/fitness.png`, and rendered on top of MP4 frames.
 
 ## Configuration reference
 Configs are YAML validated by Pydantic (`ConfigSchema`). Key sections:

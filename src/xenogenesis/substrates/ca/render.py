@@ -1,6 +1,7 @@
 """Rendering helpers for CA grids."""
 from __future__ import annotations
 from pathlib import Path
+import shutil
 from typing import Iterable, Mapping
 import numpy as np
 import matplotlib.pyplot as plt
@@ -46,21 +47,32 @@ def render_frames(states: list[np.ndarray], out_dir: Path, *, cmap: str = "magma
     if not frames:
         return out_dir / "empty.mp4"
     mp4_path = out_dir / "ca.mp4"
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("FFmpeg is required for rendering; please install it.")
     try:
         (
             ffmpeg
-            .input(str(out_dir / 'frame_%04d.png'), framerate=fps)
-            .output(str(mp4_path), vcodec='libx264', pix_fmt='yuv420p', loglevel='quiet')
+            .input(str(out_dir / "frame_%04d.png"), framerate=fps)
+            .output(
+                str(mp4_path),
+                vcodec="libx264",
+                pix_fmt="yuv420p",
+                crf=18,
+                movflags="+faststart",
+            )
             .overwrite_output()
-            .run()
+            .run(quiet=True)
         )
     except ffmpeg.Error:
         mp4_path = out_dir / "ca.gif"
-        (
-            ffmpeg
-            .input(str(out_dir / 'frame_%04d.png'), framerate=max(6, fps // 2))
-            .output(str(mp4_path), vf='palettegen', loglevel='quiet')
-            .overwrite_output()
-            .run()
-        )
+        try:
+            (
+                ffmpeg
+                .input(str(out_dir / "frame_%04d.png"), framerate=max(6, fps // 2))
+                .output(str(mp4_path), vf="palettegen", loglevel="quiet")
+                .overwrite_output()
+                .run(quiet=True)
+            )
+        except ffmpeg.Error as exc:
+            raise RuntimeError("FFmpeg is required for rendering; please install it.") from exc
     return mp4_path
