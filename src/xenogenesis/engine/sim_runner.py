@@ -42,7 +42,7 @@ def run_ca(config: ConfigSchema) -> Path:
     frame_metrics: List[dict] = []
     records = []
     for step_idx in range(config.ca.steps):
-        state = stepper.step(state, mu=config.ca.mu, sigma=config.ca.sigma, dt=config.ca.dt, inner_radius=config.ca.inner_radius, outer_radius=config.ca.outer_radius, ring_ratio=config.ca.ring_ratio)
+        state = stepper.step(state, mu=config.ca.mu, sigma=config.ca.sigma, dt=config.ca.dt, inner_radius=config.ca.inner_radius, outer_radius=config.ca.outer_radius, ring_ratio=config.ca.ring_ratio, rng=rng)
         if step_idx % config.ca.record_interval == 0:
             snapshot = state.copy()
             history.append(snapshot)
@@ -52,7 +52,7 @@ def run_ca(config: ConfigSchema) -> Path:
             records.append(stats)
     fitness = ca_fitness(history)
     records.append({"step": config.ca.steps, **fitness, "seed": config.seed})
-    metrics_path = run_dir / "metrics.parquet"
+    metrics_path = run_dir / "metrics.csv"
     save_metrics(records, metrics_path)
     with open(run_dir / "best_individual.json", "w") as f:
         json.dump({"fitness": fitness}, f)
@@ -63,8 +63,11 @@ def run_ca(config: ConfigSchema) -> Path:
             cmap=config.ca.render_cmap,
             metric_history=frame_metrics[:: config.ca.render_stride],
         )
+    config_dict = config.model_dump()
+    if isinstance(config_dict.get("outputs", {}).get("run_dir"), Path):
+        config_dict["outputs"]["run_dir"] = str(config_dict["outputs"]["run_dir"])
     with open(run_dir / "config.yaml", "w") as f:
-        yaml.safe_dump(config.model_dump(), f)
+        yaml.safe_dump(config_dict, f)
     if config.outputs.summarize:
         table = Table(title="CA objectives", show_lines=True)
         table.add_column("metric")
@@ -83,7 +86,7 @@ def run_softbody(config: ConfigSchema) -> Path:
     fitness = softbody_fitness(morph, controller)
     run_dir = Path(config.outputs.run_dir) / f"softbody_{config.seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    save_metrics([{**fitness, "seed": config.seed}], run_dir / "metrics.parquet")
+    save_metrics([{**fitness, "seed": config.seed}], run_dir / "metrics.csv")
     return run_dir
 
 
@@ -92,7 +95,7 @@ def run_digital(config: ConfigSchema) -> Path:
     fitness = digital_fitness(genome)
     run_dir = Path(config.outputs.run_dir) / f"digital_{config.seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    save_metrics([{**fitness, "seed": config.seed}], run_dir / "metrics.parquet")
+    save_metrics([{**fitness, "seed": config.seed}], run_dir / "metrics.csv")
     return run_dir
 
 

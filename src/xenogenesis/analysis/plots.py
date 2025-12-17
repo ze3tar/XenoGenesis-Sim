@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 
 
 def plot_metrics(run_dir: Path):
-    metrics_path = run_dir / "metrics.parquet"
+    metrics_path = run_dir / "metrics.csv"
     if not metrics_path.exists():
         return None
-    df = pd.read_parquet(metrics_path)
+    df = pd.read_csv(metrics_path)
     out_dir = run_dir / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -20,6 +20,7 @@ def run(
     pop: int = typer.Option(None, help="Override population"),
     steps: int = typer.Option(None, help="Override steps per eval"),
     workers: int = typer.Option(None, help="Worker processes"),
+    render: bool = typer.Option(True, help="Render outputs (requires ffmpeg)"),
 ):
     cfg = load_config(config)
     if seed is not None:
@@ -32,6 +33,7 @@ def run(
         cfg.ca.steps = steps
     if workers is not None:
         cfg.evolution.workers = workers
+    cfg.outputs.render = render
     if substrate == "ca":
         run_ca(cfg)
     elif substrate == "softbody":
