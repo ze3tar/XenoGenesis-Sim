@@ -8,17 +8,42 @@ import matplotlib.pyplot as plt
 import ffmpeg
 
 
-def _frame_overlay(ax, state: np.ndarray, idx: int, metrics: Mapping[str, float] | None, cmap: str):
+def _frame_overlay(
+    ax,
+    state: np.ndarray,
+    idx: int,
+    metrics: Mapping[str, float] | None,
+    cmap: str,
+    *,
+    gamma: float = 1.0,
+    show_contours: bool = False,
+):
     ax.clear()
     ax.set_axis_off()
-    im = ax.imshow(state, cmap=cmap, vmin=0, vmax=1, interpolation="bilinear")
+    vmin = float(np.percentile(state, 1))
+    vmax = float(np.percentile(state, 99))
+    if np.isclose(vmin, vmax):
+        vmin, vmax = 0.0, 1.0
+    img = state ** gamma
+    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="bilinear")
+    if show_contours:
+        ax.contour(state, levels=[0.5], colors="white", linewidths=0.5)
     if metrics:
         text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items())
         ax.set_title(f"t={idx} | {text}", fontsize=8)
     return im
 
 
-def render_frames(states: list[np.ndarray], out_dir: Path, *, cmap: str = "magma", fps: int = 24, metric_history: Iterable[Mapping[str, float]] | None = None) -> Path:
+def render_frames(
+    states: list[np.ndarray],
+    out_dir: Path,
+    *,
+    cmap: str = "magma",
+    fps: int = 24,
+    gamma: float = 1.0,
+    show_contours: bool = False,
+    metric_history: Iterable[Mapping[str, float]] | None = None,
+) -> Path:
     """Render a sequence of CA states to an MP4 (GIF fallback).
 
     Parameters
@@ -39,7 +64,7 @@ def render_frames(states: list[np.ndarray], out_dir: Path, *, cmap: str = "magma
     metrics_iter = list(metric_history) if metric_history else [None] * len(states)
     fig, ax = plt.subplots(figsize=(6, 6), dpi=140)
     for idx, (state, metric) in enumerate(zip(states, metrics_iter)):
-        _frame_overlay(ax, state, idx, metric, cmap)
+        _frame_overlay(ax, state, idx, metric, cmap, gamma=gamma, show_contours=show_contours)
         frame_path = out_dir / f"frame_{idx:04d}.png"
         fig.savefig(frame_path, bbox_inches="tight")
         frames.append(frame_path)

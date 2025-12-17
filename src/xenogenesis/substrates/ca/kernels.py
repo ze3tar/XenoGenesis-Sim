@@ -7,10 +7,21 @@ import numpy as np
 
 @dataclass(frozen=True)
 class KernelParams:
+    """Parameters for band-pass, multi-ring kernels.
+
+    Attributes
+    ----------
+    size:
+        Kernel size (assumes square grid).
+    rings:
+        Sequence of ``(inner_radius, outer_radius)`` tuples defining annuli.
+    ring_weights:
+        Per-ring weights; positive for excitation, negative for inhibition.
+    """
+
     size: int
-    inner_radius: float
-    outer_radius: float
-    ring_ratio: float
+    rings: tuple[tuple[float, float], ...]
+    ring_weights: tuple[float, ...]
 
 
 def _radial_disk(size: int, radius: float) -> np.ndarray:
@@ -25,17 +36,30 @@ def _radial_disk(size: int, radius: float) -> np.ndarray:
     return disk
 
 
-@lru_cache(maxsize=32)
-def kernel_bank(params: KernelParams) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return inner/outer kernels and their FFTs for the given parameters.
+def multi_ring_kernel(size: int, rings: tuple[tuple[float, float], ...], weights: tuple[float, ...]) -> np.ndarray:
+    """Construct a normalized multi-ring kernel.
 
-    The ring kernel follows the native stepper semantics: density is taken from
-    the annulus bounded by ``sqrt(inner_radius^2 * ring_ratio)`` and
-    ``outer_radius``.
+    Positive and negative bands are normalized independently to stabilize
+    excitatory/inhibitory interactions.
     """
-    inner = _radial_disk(params.size, params.inner_radius)
-    ring_inner_radius = np.sqrt(params.inner_radius * params.inner_radius * params.ring_ratio)
-    outer = _radial_disk(params.size, params.outer_radius) - _radial_disk(params.size, ring_inner_radius)
-    inner_fft = np.fft.rfftn(inner)
-    outer_fft = np.fft.rfftn(outer)
-    return inner, outer, inner_fft, outer_fft
+
+    kernel = np.zeros((size, size), dtype=np.float32)
+    for (r_in, r_out), w in zip(rings, weights):
+        ring = _radial_disk(size, r_out) - _radial_disk(size, r_in)
+        kernel += w * ring
+    pos = kernel[kernel > 0].sum()
+    neg = -kernel[kernel < 0].sum()
+    if pos > 0:
+        kernel[kernel > 0] /= pos
+    if neg > 0:
+        kernel[kernel < 0] /= neg
+    return kernel
+
+
+@lru_cache(maxsize=32)
+def kernel_bank(params: KernelParams) -> tuple[np.ndarray, np.ndarray]:
+    """Return a multi-ring kernel and its FFT for the given parameters."""
+
+    kernel = multi_ring_kernel(params.size, params.rings, params.ring_weights)
+    kernel_fft = np.fft.rfftn(kernel)
+    return kernel, kernel_fft

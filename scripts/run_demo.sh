@@ -6,7 +6,7 @@ export PYTHONPATH=${PROJECT_ROOT}/src:${PYTHONPATH:-}
 
 echo "Running CA demo..."
 python -m xenogenesis.cli run ca \
-  --config ${PROJECT_ROOT}/src/xenogenesis/config/defaults.yaml \
+  --config ${PROJECT_ROOT}/demo/life_demo.yaml \
   --generations 40 --pop 64 --steps 256 --workers 4
 
 LATEST_RUN=$(ls -dt ${PROJECT_ROOT}/runs/* 2>/dev/null | head -n1 || true)

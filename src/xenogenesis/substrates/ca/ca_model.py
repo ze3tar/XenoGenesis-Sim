@@ -38,14 +38,36 @@ class CAStepper:
         mu: float,
         sigma: float,
         dt: float,
-        inner_radius: float,
-        outer_radius: float,
-        ring_ratio: float,
+        kernel_params: KernelParams,
+        regen_rate: float,
+        consumption_rate: float,
+        noise_std: float,
         rng: np.random.Generator | None = None,
     ) -> np.ndarray:
         if self._use_native:
-            return native_ca_step(state.astype(np.float32), mu, sigma, dt, inner_radius, outer_radius, ring_ratio)
-        return self._step_numpy(state.astype(np.float32), mu, sigma, dt, inner_radius, outer_radius, ring_ratio, rng)
+            # Native kernels are deprecated for Lenia-style dynamics; fall back to NumPy.
+            return self._step_numpy(
+                state.astype(np.float32),
+                mu,
+                sigma,
+                dt,
+                kernel_params,
+                regen_rate,
+                consumption_rate,
+                noise_std,
+                rng,
+            )
+        return self._step_numpy(
+            state.astype(np.float32),
+            mu,
+            sigma,
+            dt,
+            kernel_params,
+            regen_rate,
+            consumption_rate,
+            noise_std,
+            rng,
+        )
 
     @staticmethod
     def _step_numpy(
@@ -53,26 +75,42 @@ class CAStepper:
         mu: float,
         sigma: float,
         dt: float,
-        inner_radius: float,
-        outer_radius: float,
-        ring_ratio: float,
+        kernel_params: KernelParams,
+        regen_rate: float,
+        consumption_rate: float,
+        noise_std: float,
         rng: np.random.Generator | None = None,
     ) -> np.ndarray:
-        size = state.shape[0]
-        params = KernelParams(size=size, inner_radius=inner_radius, outer_radius=outer_radius, ring_ratio=ring_ratio)
-        _, _, km_fft, kn_fft = kernel_bank(params)
-        s_fft = np.fft.rfftn(state)
-        m = np.fft.irfftn(s_fft * km_fft, s=state.shape).real
-        n = np.fft.irfftn(s_fft * kn_fft, s=state.shape).real
-        dx = np.roll(state, -1, axis=1) - np.roll(state, 1, axis=1)
-        dy = np.roll(state, -1, axis=0) - np.roll(state, 1, axis=0)
+        if state.ndim == 2:
+            biomass = state
+            resource = np.ones_like(state)
+        elif state.shape[0] == 2:
+            biomass, resource = state[0], state[1]
+        else:
+            raise ValueError("state must be (H, W) or (2, H, W)")
+
+        _, kernel_fft = kernel_bank(kernel_params)
+        s_fft = np.fft.rfftn(biomass)
+        activation = np.fft.irfftn(s_fft * kernel_fft, s=biomass.shape, axes=(0, 1)).real
+
+        dx = np.roll(biomass, -1, axis=1) - np.roll(biomass, 1, axis=1)
+        dy = np.roll(biomass, -1, axis=0) - np.roll(biomass, 1, axis=0)
         motion_bias = 0.03 * (dx + dy)
-        growth = np.exp(-((n - mu) ** 2) / (2 * sigma ** 2))
-        delta = dt * (growth - state) + motion_bias
-        state = state + delta
-        high_density = state > 0.75
-        state[high_density] *= 0.98
+
+        growth = 2.0 * np.exp(-0.5 * ((activation - mu) / sigma) ** 2) - 1.0
+        growth_term = growth * resource
+
+        resource += regen_rate * (1.0 - resource)
+        resource -= consumption_rate * biomass * resource
+        resource = np.clip(resource, 0.0, 1.0)
+
+        delta_biomass = dt * growth_term + motion_bias
+        biomass = biomass + delta_biomass
+        high_density = biomass > 0.75
+        biomass[high_density] *= 0.98
+
         rng = rng or np.random.default_rng()
-        state += rng.normal(0, 0.002, state.shape)
-        state = np.clip(state, 0.001, 1.0)
-        return state.astype(np.float32)
+        biomass += rng.normal(0, noise_std, biomass.shape)
+        biomass = np.clip(biomass, 0.001, 1.0)
+
+        return np.stack((biomass.astype(np.float32), resource.astype(np.float32)))

@@ -13,6 +13,7 @@ from xenogenesis.core.rng import make_rng
 from xenogenesis.engine.checkpointing import load_checkpoint
 from xenogenesis.engine.metrics import save_metrics
 from xenogenesis.substrates.ca import CAStepper, ca_fitness, render_frames
+from xenogenesis.substrates.ca.kernels import KernelParams
 from xenogenesis.substrates.softbody import VoxelMorphology, Controller, softbody_fitness
 from xenogenesis.substrates.digital import InstructionGenome, digital_fitness
 
@@ -36,21 +37,42 @@ def run_ca(config: ConfigSchema) -> Path:
     rng = make_rng(config.seed)
     run_dir = Path(config.outputs.run_dir) / f"ca_{config.seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    state = rng.random((config.ca.grid_size, config.ca.grid_size), dtype=np.float32)
+    biomass = rng.random((config.ca.grid_size, config.ca.grid_size), dtype=np.float32)
+    resource = np.ones_like(biomass, dtype=np.float32)
+    state = np.stack((biomass, resource))
     stepper = CAStepper()
+    kernel_params = KernelParams(
+        size=config.ca.grid_size,
+        rings=tuple(tuple(r) for r in config.ca.rings),
+        ring_weights=tuple(config.ca.ring_weights),
+    )
     history: List[np.ndarray] = []
     frame_metrics: List[dict] = []
     records = []
     for step_idx in range(config.ca.steps):
-        state = stepper.step(state, mu=config.ca.mu, sigma=config.ca.sigma, dt=config.ca.dt, inner_radius=config.ca.inner_radius, outer_radius=config.ca.outer_radius, ring_ratio=config.ca.ring_ratio, rng=rng)
+        state = stepper.step(
+            state,
+            mu=config.ca.mu,
+            sigma=config.ca.sigma,
+            dt=config.ca.dt,
+            kernel_params=kernel_params,
+            regen_rate=config.ca.regen_rate,
+            consumption_rate=config.ca.consumption_rate,
+            noise_std=config.ca.noise_std,
+            rng=rng,
+        )
         if step_idx % config.ca.record_interval == 0:
-            snapshot = state.copy()
+            snapshot = state[0].copy()
             history.append(snapshot)
             stats = _frame_stats(snapshot)
             stats["step"] = step_idx
             frame_metrics.append(stats)
             records.append(stats)
-    fitness = ca_fitness(history)
+    fitness = ca_fitness(
+        history,
+        mass_threshold=config.ca.mass_threshold,
+        active_threshold=config.ca.active_threshold,
+    )
     records.append({"step": config.ca.steps, **fitness, "seed": config.seed})
     metrics_path = run_dir / "metrics.csv"
     save_metrics(records, metrics_path)
@@ -61,6 +83,8 @@ def run_ca(config: ConfigSchema) -> Path:
             history[:: config.ca.render_stride],
             run_dir / "renders",
             cmap=config.ca.render_cmap,
+            gamma=config.ca.gamma,
+            show_contours=config.ca.show_contours,
             metric_history=frame_metrics[:: config.ca.render_stride],
         )
     config_dict = config.model_dump()
