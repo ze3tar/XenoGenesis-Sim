@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.7", "pybind11>=2.10", "numpy", "setuptools", "wheel"]
+requires = ["scikit-build-core>=0.9.1", "pybind11>=2.10", "numpy", "setuptools", "wheel"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -35,12 +35,10 @@ build-dir = "build"
 install.components = ["python"]
 
 [tool.scikit-build.cmake]
-minimum-version = "3.18"
-parallel = true
-verbose = false
+version = ">=3.18"
 
-[tool.scikit-build.generate]
-cmake = true
+[tool.scikit-build.build]
+verbose = false
 
 [tool.cibuildwheel]
 skip = "pp* *musllinux*"
