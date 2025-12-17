@@ -2,7 +2,8 @@
 from pathlib import Path
 from typing import Optional
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
+from pydantic import ValidationInfo
 
 
 class EnvironmentConfig(BaseModel):
@@ -17,19 +18,49 @@ class CAConfig(BaseModel):
     mu: float = 0.15
     sigma: float = 0.015
     dt: float = 0.1
-    inner_radius: float = 3.0
-    outer_radius: float = 6.0
-    ring_ratio: float = 0.5
+    rings: list[list[float]] = Field(default_factory=lambda: [[1.0, 4.0], [4.0, 8.0], [8.0, 12.0]])
+    ring_weights: list[float] = Field(default_factory=lambda: [1.0, -0.5, 0.2])
+    regen_rate: float = 0.05
+    consumption_rate: float = 0.02
+    noise_std: float = 0.002
+    mass_threshold: float = 0.05
+    active_threshold: float = 0.01
+    gamma: float = 1.0
+    show_contours: bool = False
     steps: int = 256
     record_interval: int = 8
     render_stride: int = 4
     render_cmap: str = "magma"
     novelty_enabled: bool = False
 
-    @validator("grid_size")
+    @field_validator("grid_size")
+    @classmethod
     def validate_size(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("grid_size must be positive")
+        return v
+
+    @field_validator("rings", "ring_weights", mode="before")
+    @classmethod
+    def validate_lists(cls, v):
+        if isinstance(v, tuple):
+            return list(v)
+        return v
+
+    @field_validator("ring_weights")
+    @classmethod
+    def validate_ring_weights(cls, v, info: ValidationInfo):
+        rings = info.data.get("rings", [])
+        if len(v) != len(rings):
+            raise ValueError("ring_weights must match rings length")
+        return v
+
+    @field_validator("rings")
+    @classmethod
+    def validate_rings(cls, v):
+        for r in v:
+            if len(r) != 2 or r[0] < 0 or r[1] <= r[0]:
+                raise ValueError("rings must be [inner, outer] with outer>inner>=0")
         return v
 
 

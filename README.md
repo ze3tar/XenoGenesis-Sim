@@ -54,29 +54,31 @@ make dev && make demo
 This one-line pipeline installs the editable package, builds native extensions through `pyproject.toml`, runs `xenogenesis run ca` with the defaults in `src/xenogenesis/config/defaults.yaml`, generates Parquet metrics, summary plots, an MP4/GIF render, and prints the best genome/objectives. The latest run is auto-analyzed to produce plots and `report.md`.
 
 ### Mathematical model (CA substrate)
-The CA follows a Lenia/SmoothLife-style continuous update rule:
+The CA is Lenia-inspired with a **biomass + resource** state and multi-ring excitation/inhibition kernels:
 
-1. Build normalized radial kernels for the inner disk \(K_m\) and outer ring \(K_n\) using radii \(r_m\) and \(r_n\) (ring inner radius is \(\sqrt{r_m^2\,\rho}\) where \(\rho\) is `ring_ratio`).
-2. Compute smoothed densities via FFT convolution: \(m = K_m \ast A\) and \(n = K_n \ast A\), where \(A\) is the current state.
-3. Growth field (Gaussian bump): \(g = \exp(-(n - \mu)^2/(2\sigma^2))\).
-4. Time integration: \(A' = \mathrm{clip}(A + \Delta t \cdot (2g - 1), 0, 1)\).
+1. Build a normalized, signed multi-ring kernel \(K\) from concentric annuli (`ca.rings`) and weights (`ca.ring_weights`). Positive and negative bands are normalized separately for stability.
+2. Compute smoothed activation \(A = K \ast B\) where \(B\) is the biomass channel.
+3. Signed growth: \(G = 2\exp(-0.5 ((A - \mu)/\sigma)^2) - 1\), gated by local resource \(R\): \(\Delta B = \Delta t\, G \cdot R + \text{motion bias}\).
+4. Resource dynamics: \(R' = \mathrm{clip}(R + r_\mathrm{regen}(1-R) - r_\mathrm{use} B R, 0, 1)\).
+5. Noise, contour-friendly clipping, and mild high-density suppression encourage reproduction/splitting.
 
-`mu`, `sigma`, and `dt` live in `config/defaults.yaml` and are validated by Pydantic. Kernels are cached so long sweeps reuse FFTs and avoid recomputation overhead.
+`mu`, `sigma`, `dt`, `rings`, `ring_weights`, and resource/fitness thresholds live in `config/defaults.yaml` and are validated by Pydantic. Kernels are cached so long sweeps reuse FFTs and avoid recomputation overhead.
 
 ### Fitness and diagnostics
 - **Persistence**: mean active fraction across recorded frames.
 - **Complexity proxy**: entropy of the state histogram plus edge density.
 - **Motility**: center-of-mass speed estimated from tracked centroids.
 - **Energy efficiency**: complexity scaled by a penalty on excess mass.
+- **Reproduction/Longevity**: connected-component splits, surviving mass, and lifetime above activity thresholds.
 - **Behavior descriptor**: `[entropy, edge_density, com_speed, energy_period]` for novelty/archive use.
 
-Frame-level metrics (entropy, edge density, active fraction) are stored alongside summary objectives in `metrics.csv`, plotted in `plots/fitness.png`, and rendered on top of MP4 frames.
+Frame-level metrics (entropy, edge density, active fraction) are stored alongside summary objectives in `metrics.csv`, plotted in `plots/fitness.png`, and rendered on top of MP4 frames with optional gamma/contour overlays.
 
 ## Configuration reference
 Configs are YAML validated by Pydantic (`ConfigSchema`). Key sections:
 - `seed`: Deterministic base seed (PCG64DXSM).
 - `environment`: Gravity, temperature, radiation, resource regeneration.
-- `ca`: `grid_size`, `mu`, `sigma`, `dt`, `inner_radius`, `outer_radius`, `ring_ratio`, `steps`, `novelty.enabled`.
+- `ca`: `grid_size`, `mu`, `sigma`, `dt`, `rings`, `ring_weights`, resource rates (`regen_rate`, `consumption_rate`), thresholds (`mass_threshold`, `active_threshold`), `noise_std`, render controls (`render_stride`, `gamma`, `show_contours`).
 - `evolution`: `population`, `generations`, `selection` (`nsga2`), `mutation` rates, `workers`, `checkpoint_interval`.
 - `outputs`: run directory, render toggles, archive sizes.
 

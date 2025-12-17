@@ -1,8 +1,8 @@
-seed: 123
+seed: 42
 environment:
   gravity: 9.81
   temperature: 295.0
-  radiation: 0.05
+  radiation: 0.0
   resource_regen: 0.05
 ca:
   grid_size: 128
@@ -16,16 +16,15 @@ ca:
   noise_std: 0.002
   mass_threshold: 0.05
   active_threshold: 0.02
-  gamma: 1.2
-  show_contours: true
   steps: 600
   record_interval: 1
   render_stride: 1
   render_cmap: inferno
-  novelty_enabled: false
+  gamma: 1.5
+  show_contours: true
 evolution:
-  population: 64
-  generations: 40
+  population: 20
+  generations: 10
   selection: nsga2
   mutation_rate: 0.1
   workers: 4
@@ -34,3 +33,4 @@ outputs:
   run_dir: runs
   render: true
   archive_limit: 1000
+  summarize: true

@@ -8,14 +8,25 @@ python - <<'PY'
 import time
 import numpy as np
 from xenogenesis.substrates.ca.ca_model import CAStepper
+from xenogenesis.substrates.ca.kernels import KernelParams
 
 size = 128
 steps = 50
-state = np.random.default_rng(0).random((size, size), dtype=np.float32)
+state = np.stack((np.random.default_rng(0).random((size, size), dtype=np.float32), np.ones((size, size), dtype=np.float32)))
 stepper = CAStepper()
+params = KernelParams(size=size, rings=((1.0, 4.0), (4.0, 8.0), (8.0, 12.0)), ring_weights=(1.0, -0.6, 0.2))
 start = time.time()
 for _ in range(steps):
-    state = stepper.step(state, mu=0.15, sigma=0.015, dt=0.1, inner_radius=3.0, outer_radius=6.0, ring_ratio=0.5)
+    state = stepper.step(
+        state,
+        mu=0.15,
+        sigma=0.015,
+        dt=0.1,
+        kernel_params=params,
+        regen_rate=0.05,
+        consumption_rate=0.02,
+        noise_std=0.002,
+    )
 elapsed = time.time() - start
 print(f"Ran {steps} steps on {size}x{size} grid in {elapsed:.3f}s ({steps/elapsed:.2f} steps/sec)")
 PY
