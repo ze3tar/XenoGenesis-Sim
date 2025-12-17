@@ -1,4 +1,4 @@
-add_library(xenogenesis_ca_stepper OBJECT
+add_library(xenogenesis_ca_stepper STATIC
   ca/ca_stepper.cpp
   common/rng.cpp
   common/metrics.cpp
@@ -17,10 +17,15 @@ target_include_directories(xenogenesis_ca_stepper
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-add_library(xenogenesis_pybind MODULE bindings/pybind_module.cpp $<TARGET_OBJECTS:xenogenesis_ca_stepper>)
+add_library(xenogenesis_pybind MODULE bindings/pybind_module.cpp)
 set_target_properties(xenogenesis_pybind PROPERTIES PREFIX "" OUTPUT_NAME "xenogenesis_native")
 
-target_include_directories(xenogenesis_pybind PRIVATE ${Python_INCLUDE_DIRS})
+target_include_directories(xenogenesis_pybind
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${Python_INCLUDE_DIRS}
+)
+target_link_libraries(xenogenesis_pybind PRIVATE xenogenesis_ca_stepper)
 if(pybind11_FOUND)
   target_link_libraries(xenogenesis_pybind PRIVATE pybind11::module)
 endif()
