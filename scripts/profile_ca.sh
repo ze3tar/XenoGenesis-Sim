@@ -26,6 +26,13 @@ for _ in range(steps):
         regen_rate=0.05,
         consumption_rate=0.02,
         noise_std=0.002,
+        growth_alpha=0.9,
+        polarity_gain=0.35,
+        polarity_decay=0.94,
+        polarity_mobility=0.05,
+        max_mass=0.8,
+        death_factor=0.55,
+        polarity_noise=0.0005,
     )
 elapsed = time.time() - start
 print(f"Ran {steps} steps on {size}x{size} grid in {elapsed:.3f}s ({steps/elapsed:.2f} steps/sec)")

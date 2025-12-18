@@ -53,6 +53,9 @@ def multi_ring_kernel(size: int, rings: tuple[tuple[float, float], ...], weights
         kernel[kernel > 0] /= pos
     if neg > 0:
         kernel[kernel < 0] /= neg
+    mass = np.abs(kernel).sum()
+    if mass > 0:
+        kernel /= mass
     return kernel
 
 

@@ -9,22 +9,23 @@ XenoGenesis-Sim is a Linux-first artificial-life sandbox for evolving digital or
 - **Analyze results** via Parquet metrics, annotated MP4/GIF renders, plots, and auto-generated markdown reports.
 
 ## Mathematical model (CA substrate)
-The default substrate is Lenia-inspired with a biomass \(B\) channel coupled to a resource \(R\) channel. Let \(K\) be a signed, normalized multi-ring kernel built from concentric annuli (`ca.rings`, `ca.ring_weights`). With a timestep \(\Delta t\):
+The default substrate is Lenia-inspired but extended with metabolism and polarity memory. A biomass \(B\) channel is coupled to a resource \(R\) field and a two-plane polarity \(P=(P_x,P_y)\). Let \(K\) be a normalized three-ring kernel (`ca.rings`, `ca.ring_weights`). With timestep \(\Delta t\):
 
-1. **Convolution**: \(A = K * B\), computed with cached FFTs for speed.
-2. **Growth field**: \(G = 2\exp\left(-\tfrac{1}{2}\big(\tfrac{A-\mu}{\sigma}\big)^2\right) - 1\), where \(\mu\) and \(\sigma\) come from config.
-3. **Biomass update**: \(B' = \mathrm{clip}(B + \Delta t\,(G \cdot R + b_\text{motion}), 0, 1)\) with optional motion bias and contour-friendly clipping.
-4. **Resource dynamics**: \(R' = \mathrm{clip}(R + r_\text{regen}(1-R) - r_\text{use} \cdot B R, 0, 1)\).
-5. **Stability extras**: small noise, mild high-density suppression, and caching of FFT plans/kernels to keep long sweeps stable and fast.
+1. **Convolution**: \(A = K * B\) via cached FFTs.
+2. **Signed growth**: \(G = \alpha \tanh((A-\mu)/\sigma)\) where \(\alpha\) is `growth_alpha`. Positive/negative bands compete while the kernel mass is normalized to prevent runaway growth.
+3. **Metabolism**: resources regenerate and are consumed by growth: \(R' = \mathrm{clip}(R + r_\text{regen}(1-R) - r_\text{use}\,B\max(G,0), 0, 1)\).
+4. **Polarity / motion memory**: gradients reinforce polarity \(P' = \lambda P + \gamma \nabla B\); biomass advects along polarity: \(B' = B + \Delta t \,(G \cdot R + m\,\mathrm{sum}(P))\).
+5. **Density-dependent death**: regions above `max_mass` are damped by `death_factor`, encouraging necking and fission.
+6. **Stability extras**: small Gaussian noise, clipping, and cached FFT kernels for long runs.
 
 ### Fitness and diagnostics
-Frame-level metrics (entropy, edge density, active fraction) feed into multi-objective scores:
+Frame-level metrics (entropy, edge density, active fraction, component elongation) feed into multi-objective scores:
 - **Persistence**: mean active fraction across recorded frames.
-- **Complexity proxy**: entropy + edge density.
+- **Morphological complexity**: entropy + edges + elongation.
 - **Motility**: center-of-mass speed from tracked centroids.
 - **Energy efficiency**: complexity penalized by excess mass.
-- **Reproduction/Longevity**: component splits and survival above thresholds.
-A behavior descriptor `[entropy, edge_density, com_speed, energy_period]` supports novelty search and archiving.
+- **Reproduction/Longevity**: split detections from component tracking and centroid lifetimes.
+A behavior descriptor `[entropy, edge_density, com_speed, energy_period, elongation_mean, elongation_median]` supports novelty search and archiving.
 
 ## Project layout
 ```
