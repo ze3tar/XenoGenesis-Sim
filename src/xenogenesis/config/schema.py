@@ -18,11 +18,18 @@ class CAConfig(BaseModel):
     mu: float = 0.15
     sigma: float = 0.015
     dt: float = 0.1
+    growth_alpha: float = 0.8
     rings: list[list[float]] = Field(default_factory=lambda: [[1.0, 4.0], [4.0, 8.0], [8.0, 12.0]])
     ring_weights: list[float] = Field(default_factory=lambda: [1.0, -0.5, 0.2])
     regen_rate: float = 0.05
     consumption_rate: float = 0.02
     noise_std: float = 0.002
+    polarity_gain: float = 0.35
+    polarity_decay: float = 0.94
+    polarity_mobility: float = 0.05
+    polarity_noise: float = 0.0005
+    max_mass: float = 0.8
+    death_factor: float = 0.55
     mass_threshold: float = 0.05
     active_threshold: float = 0.01
     gamma: float = 1.0
@@ -61,6 +68,20 @@ class CAConfig(BaseModel):
         for r in v:
             if len(r) != 2 or r[0] < 0 or r[1] <= r[0]:
                 raise ValueError("rings must be [inner, outer] with outer>inner>=0")
+        return v
+
+    @field_validator("growth_alpha", "polarity_gain", "polarity_mobility", "regen_rate", "consumption_rate")
+    @classmethod
+    def validate_positive(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("rates must be non-negative")
+        return v
+
+    @field_validator("polarity_decay", "death_factor")
+    @classmethod
+    def validate_unit_interval(cls, v: float) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError("parameters must be within [0, 1]")
         return v
 
 
