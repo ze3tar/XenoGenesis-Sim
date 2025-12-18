@@ -24,15 +24,21 @@ class CAConfig(BaseModel):
     regen_rate: float = 0.05
     consumption_rate: float = 0.02
     noise_std: float = 0.002
+    decay_lambda: float = 0.0
+    resource_diffusion: float = 0.0
+    biomass_diffusion: float = 0.0
     polarity_gain: float = 0.35
     polarity_decay: float = 0.94
     polarity_mobility: float = 0.05
     polarity_noise: float = 0.0005
     max_mass: float = 0.8
     death_factor: float = 0.55
+    elongation_trigger: float = 1.3
+    fission_assist: float = 0.0
     mass_threshold: float = 0.05
     active_threshold: float = 0.01
     gamma: float = 1.0
+    contour_level: float = 0.5
     show_contours: bool = False
     steps: int = 256
     record_interval: int = 8
@@ -85,6 +91,13 @@ class CAConfig(BaseModel):
         return v
 
 
+class GenomeConfig(BaseModel):
+    enabled: bool = False
+    length: int = 24
+    mutation_sigma: float = 0.05
+    structural_prob: float = 0.05
+
+
 class EvolutionConfig(BaseModel):
     population: int = 64
     generations: int = 40
@@ -105,6 +118,7 @@ class ConfigSchema(BaseModel):
     seed: int = 0
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
     ca: CAConfig = Field(default_factory=CAConfig)
+    genome: GenomeConfig = Field(default_factory=GenomeConfig)
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
     outputs: OutputConfig = Field(default_factory=OutputConfig)
 

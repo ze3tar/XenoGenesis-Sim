@@ -56,6 +56,13 @@ def _components(state: np.ndarray, threshold: float = 0.1) -> list[dict]:
             height = max_y - min_y + 1
             width = max_x - min_x + 1
             elongation = float(max(height, width) / max(min(height, width), 1.0))
+            perimeter = 0
+            coord_set = {(int(c[0]), int(c[1])) for c in coords}
+            for x, y in coord_set:
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = x + dx, y + dy
+                    if (nx, ny) not in coord_set:
+                        perimeter += 1
             comps.append(
                 {
                     "mass": float(masses.sum()),
@@ -63,6 +70,7 @@ def _components(state: np.ndarray, threshold: float = 0.1) -> list[dict]:
                     "centroid": centroid.astype(np.float32),
                     "bbox": (height, width),
                     "elongation": elongation,
+                    "perimeter": float(perimeter),
                 }
             )
     return comps

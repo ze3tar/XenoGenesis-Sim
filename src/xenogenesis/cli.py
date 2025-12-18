@@ -6,7 +6,12 @@ from rich import print
 
 from xenogenesis.config import load_config, ConfigSchema
 from xenogenesis.engine.sim_runner import run_ca, run_softbody, run_digital, resume_checkpoint
-from xenogenesis.analysis import plot_metrics, write_report
+from xenogenesis.analysis import (
+    plot_metrics,
+    write_report,
+    annotate_species,
+    run_phylogeny_pipeline,
+)
 
 app = typer.Typer(help="XenoGenesis simulation CLI")
 
@@ -51,10 +56,30 @@ def resume(checkpoint: Path = typer.Argument(..., help="Checkpoint file")):
 
 
 @app.command()
-def analyze(run: Path = typer.Option(..., help="Run directory")):
+def analyze(
+    run: Path = typer.Option(..., help="Run directory"),
+    species: bool = typer.Option(False, help="Run species classification"),
+    phylogeny: bool = typer.Option(False, help="Render phylogeny"),
+):
     plot_metrics(run)
+    if species:
+        annotate_species(run)
+    if phylogeny:
+        run_phylogeny_pipeline(run)
     write_report(run)
     print(f"Analysis complete for {run}")
+
+
+@app.command()
+def phylogeny(
+    run: Path = typer.Option(..., help="Run directory"),
+    mode: str = typer.Option("genome", help="Distance metric: genome|phenotype"),
+    out: Path | None = typer.Option(None, help="Optional output directory"),
+):
+    if mode not in {"genome", "phenotype"}:
+        raise typer.BadParameter("mode must be 'genome' or 'phenotype'")
+    out_path = run_phylogeny_pipeline(run, mode=mode, out_dir=out)
+    print(f"Phylogeny saved to {out_path}")
 
 
 @app.command()
