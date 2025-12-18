@@ -26,6 +26,20 @@ ca:
   death_factor: 0.5
   elongation_trigger: 1.4
   fission_assist: 0.05
+  maintenance_cost: 0.08
+  competition_scale: 0.28
+  competition_radius: 3.0
+  resource_capacity: 1.25
+  resource_gradient: 0.3
+  polarity_diffusion: 0.02
+  polarity_mutation: 0.02
+  directional_gain: 1.1
+  division_threshold: 0.52
+  division_fraction: 0.48
+  reproduction_cost: 0.18
+  resource_affinity: 0.32
+  toxin_rate: 0.01
+  drift_rate: 0.01
   mass_threshold: 0.05
   active_threshold: 0.02
   gamma: 1.2

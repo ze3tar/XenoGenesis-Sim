@@ -5,7 +5,7 @@ import importlib.util
 from dataclasses import dataclass
 import numpy as np
 
-from .kernels import KernelParams, kernel_bank
+from .kernels import KernelParams, KernelCache, kernel_bank
 from .genome import CAParams
 
 _native_spec = importlib.util.find_spec("xenogenesis_native")
@@ -22,6 +22,14 @@ class StepStats:
     mass: float
     entropy: float
     edge_density: float
+    reproduction_events: int
+    resource: float
+
+
+@dataclass
+class StepResult:
+    state: np.ndarray
+    stats: StepStats
 
 
 class CAStepper:
@@ -31,19 +39,94 @@ class CAStepper:
         # The NumPy path contains the most up-to-date biological dynamics, so use it
         # even when the native extension is available.
         self._use_native = False
+        self._resource_gradient_cache: dict[tuple[int, int], np.ndarray] = {}
+        self._drift_phase: float = 0.0
 
-    def step(self, state: np.ndarray, params: CAParams, *, rng: np.random.Generator | None = None) -> np.ndarray:
+    def step(self, state: np.ndarray, params: CAParams, *, rng: np.random.Generator | None = None) -> StepResult:
         if self._use_native:
             # Native kernels are deprecated for Lenia-style dynamics; fall back to NumPy.
             return self._step_numpy(state.astype(np.float32), params, rng)
         return self._step_numpy(state.astype(np.float32), params, rng)
 
+    def _resource_gradient(self, shape: tuple[int, int]) -> np.ndarray:
+        if shape in self._resource_gradient_cache:
+            return self._resource_gradient_cache[shape]
+        h, w = shape
+        y = np.linspace(-1.0, 1.0, h, dtype=np.float32)[:, None]
+        x = np.linspace(-1.0, 1.0, w, dtype=np.float32)[None, :]
+        gradient = (x + 0.6 * y) * 0.5
+        self._resource_gradient_cache[shape] = gradient
+        return gradient
+
     @staticmethod
+    def _laplacian(field: np.ndarray) -> np.ndarray:
+        return (
+            -4 * field
+            + np.roll(field, 1, axis=0)
+            + np.roll(field, -1, axis=0)
+            + np.roll(field, 1, axis=1)
+            + np.roll(field, -1, axis=1)
+        )
+
+    @staticmethod
+    def _entropy(field: np.ndarray) -> float:
+        hist, _ = np.histogram(field, bins=32, range=(0, 1), density=True)
+        hist = hist + 1e-9
+        return float(-(hist * np.log2(hist)).sum())
+
+    def _anisotropic_reproduction(
+        self,
+        biomass: np.ndarray,
+        resource: np.ndarray,
+        polarity_x: np.ndarray,
+        polarity_y: np.ndarray,
+        params: CAParams,
+        rng: np.random.Generator,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+        division_mask = (biomass > params.division_threshold) & (resource > params.resource_affinity)
+        if not np.any(division_mask):
+            return biomass, resource, polarity_x, polarity_y, 0
+        coords = np.indices(biomass.shape)
+        direction = np.stack((polarity_y, polarity_x))
+        norm = np.linalg.norm(direction, axis=0) + 1e-6
+        direction_unit = direction / norm
+        grad_y, grad_x = np.gradient(biomass)
+        fallback_y = np.sign(grad_y)
+        fallback_x = np.sign(grad_x)
+        offset_y = np.rint(direction_unit[0]).astype(int)
+        offset_x = np.rint(direction_unit[1]).astype(int)
+        offset_y = np.where(offset_y == 0, fallback_y, offset_y)
+        offset_x = np.where(offset_x == 0, fallback_x, offset_x)
+        offset_y = np.clip(offset_y, -1, 1)
+        offset_x = np.clip(offset_x, -1, 1)
+        transfer = params.division_fraction * biomass * division_mask
+        resource_cost = params.reproduction_cost * transfer
+        resource = np.clip(resource - resource_cost, 0.0, params.resource_capacity)
+        target_y = (coords[0] + offset_y) % biomass.shape[0]
+        target_x = (coords[1] + offset_x) % biomass.shape[1]
+        offspring_biomass = np.zeros_like(biomass)
+        np.add.at(offspring_biomass, (target_y, target_x), transfer)
+        biomass = biomass - transfer + offspring_biomass
+
+        offspring_px = np.zeros_like(polarity_x)
+        offspring_py = np.zeros_like(polarity_y)
+        np.add.at(offspring_px, (target_y, target_x), polarity_x * division_mask)
+        np.add.at(offspring_py, (target_y, target_x), polarity_y * division_mask)
+        mutation = rng.normal(0.0, params.polarity_mutation, size=biomass.shape)
+        offspring_px += mutation * division_mask
+        offspring_py += mutation * division_mask
+        polarity_x = np.where(division_mask, offspring_px, polarity_x)
+        polarity_y = np.where(division_mask, offspring_py, polarity_y)
+        reproduction_events = int(np.count_nonzero(division_mask))
+        return biomass, resource, polarity_x, polarity_y, reproduction_events
+
     def _step_numpy(
+        self,
         state: np.ndarray,
         params: CAParams,
         rng: np.random.Generator | None = None,
-    ) -> np.ndarray:
+    ) -> StepResult:
+        rng = rng or np.random.default_rng()
         if state.ndim == 2:
             biomass = state
             resource = np.ones_like(state)
@@ -60,63 +143,73 @@ class CAStepper:
         else:
             raise ValueError("state must be (H, W) or (C, H, W)")
 
-        _, kernel_fft = kernel_bank(params.kernel_params)
+        kernel_cache: KernelCache = kernel_bank(params.kernel_params)
         s_fft = np.fft.rfftn(biomass)
-        activation = np.fft.irfftn(s_fft * kernel_fft, s=biomass.shape, axes=(0, 1)).real
+        activation = np.fft.irfftn(s_fft * kernel_cache.kernel_fft, s=biomass.shape, axes=(0, 1)).real
+        directional = params.directional_gain * (
+            np.fft.irfftn(s_fft * kernel_cache.grad_fft[1], s=biomass.shape, axes=(0, 1)).real * polarity_x
+            + np.fft.irfftn(s_fft * kernel_cache.grad_fft[0], s=biomass.shape, axes=(0, 1)).real * polarity_y
+        )
+        kernel_response = activation + directional
+        competition_kernel_fft = np.fft.rfftn(np.abs(kernel_cache.kernel))
+        local_density = np.fft.irfftn(np.fft.rfftn(biomass) * competition_kernel_fft, s=biomass.shape, axes=(0, 1)).real
+        competition_penalty = params.competition_scale * local_density
 
         grad_y, grad_x = np.gradient(biomass)
         polarity_x = params.polarity_decay * polarity_x + params.polarity_gain * grad_x
         polarity_y = params.polarity_decay * polarity_y + params.polarity_gain * grad_y
+        if params.polarity_diffusion > 0:
+            lap_px = self._laplacian(polarity_x)
+            lap_py = self._laplacian(polarity_y)
+            polarity_x += params.polarity_diffusion * lap_px
+            polarity_y += params.polarity_diffusion * lap_py
 
-        growth = params.growth_alpha * np.tanh((activation - params.mu) / max(params.sigma, 1e-6))
-        growth_term = growth * resource
+        growth = np.tanh(params.growth_alpha * (kernel_response - params.maintenance_cost - competition_penalty))
+        growth_term = growth * np.clip(resource, 0.0, params.resource_capacity)
 
-        resource += params.regen_rate * (1.0 - resource)
-        resource -= params.consumption_rate * biomass * np.maximum(growth_term, 0.0)
+        resource += params.regen_rate * (params.resource_capacity - resource)
+        gradient = self._resource_gradient(biomass.shape)
+        self._drift_phase += params.drift_rate
+        drift = np.sin(self._drift_phase) * gradient
+        resource += params.resource_gradient * gradient + drift
+        resource -= params.consumption_rate * np.maximum(growth_term, 0.0)
+        resource -= params.toxin_rate * biomass
         if params.resource_diffusion > 0:
-            lap_r = (
-                -4 * resource
-                + np.roll(resource, 1, axis=0)
-                + np.roll(resource, -1, axis=0)
-                + np.roll(resource, 1, axis=1)
-                + np.roll(resource, -1, axis=1)
-            )
-            resource += params.resource_diffusion * lap_r
-        resource = np.clip(resource, 0.0, 1.0)
+            resource += params.resource_diffusion * self._laplacian(resource)
+        resource = np.clip(resource, 0.0, params.resource_capacity)
+
         biomass_decay = params.decay_lambda * biomass
-        transport = params.polarity_mobility * (polarity_x + polarity_y)
-        delta_biomass = params.dt * (growth_term - biomass_decay) + params.dt * transport
+        transport = params.polarity_mobility * (polarity_x * grad_x + polarity_y * grad_y)
+        delta_biomass = params.dt * (growth_term - biomass_decay + transport)
         if params.biomass_diffusion > 0:
-            lap = (
-                -4 * biomass
-                + np.roll(biomass, 1, axis=0)
-                + np.roll(biomass, -1, axis=0)
-                + np.roll(biomass, 1, axis=1)
-                + np.roll(biomass, -1, axis=1)
-            )
-            delta_biomass += params.biomass_diffusion * lap
+            delta_biomass += params.biomass_diffusion * self._laplacian(biomass)
         if params.fission_assist > 0:
-            lap = (
-                -4 * biomass
-                + np.roll(biomass, 1, axis=0)
-                + np.roll(biomass, -1, axis=0)
-                + np.roll(biomass, 1, axis=1)
-                + np.roll(biomass, -1, axis=1)
-            )
-            delta_biomass += params.fission_assist * lap
+            delta_biomass += params.fission_assist * self._laplacian(biomass)
         biomass = biomass + delta_biomass
         high_density = biomass > params.max_mass
         biomass[high_density] *= params.death_factor
 
-        rng = rng or np.random.default_rng()
+        biomass, resource, polarity_x, polarity_y, reproduction_events = self._anisotropic_reproduction(
+            biomass, resource, polarity_x, polarity_y, params, rng
+        )
+
         biomass += rng.normal(0, params.noise_std, biomass.shape)
         polarity_x += rng.normal(0, params.polarity_noise, biomass.shape)
         polarity_y += rng.normal(0, params.polarity_noise, biomass.shape)
         biomass = np.clip(biomass, 0.0, 1.0)
         polarity_x = np.clip(polarity_x, -1.0, 1.0)
         polarity_y = np.clip(polarity_y, -1.0, 1.0)
+        resource = np.clip(resource, 0.0, params.resource_capacity)
 
-        return np.stack(
+        stats = StepStats(
+            mass=float(biomass.mean()),
+            entropy=self._entropy(biomass),
+            edge_density=float(np.mean(np.abs(np.gradient(biomass)))),
+            reproduction_events=reproduction_events,
+            resource=float(resource.mean()),
+        )
+
+        stacked = np.stack(
             (
                 biomass.astype(np.float32),
                 resource.astype(np.float32),
@@ -125,3 +218,4 @@ class CAStepper:
                 *extras,
             )
         )
+        return StepResult(state=stacked, stats=stats)

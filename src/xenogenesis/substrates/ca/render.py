@@ -20,6 +20,9 @@ def _frame_overlay(
     contour_level: float = 0.5,
     prev_state: np.ndarray | None = None,
     overlay_delta: bool = False,
+    show_polarity_vectors: bool = False,
+    vector_stride: int = 8,
+    species_color: int | None = None,
 ):
     ax.clear()
     ax.set_axis_off()
@@ -41,7 +44,13 @@ def _frame_overlay(
     if np.isclose(vmin, vmax):
         vmin, vmax = 0.0, 1.0
     img = biomass ** gamma
-    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="bilinear")
+    if species_color is not None:
+        base_cmap = plt.get_cmap("tab20")
+        tint = base_cmap(species_color % base_cmap.N)
+        tint_img = np.dstack([img * tint[i] for i in range(3)])
+        im = ax.imshow(tint_img, vmin=vmin, vmax=vmax, interpolation="bilinear")
+    else:
+        im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="bilinear")
     if overlay_delta and prev_state is not None:
         delta = biomass - prev_state
         denom = np.max(np.abs(delta)) + 1e-6
@@ -52,8 +61,21 @@ def _frame_overlay(
         ax.imshow(polarity_mag, cmap="twilight", alpha=0.25, vmin=0, vmax=1)
     if show_contours:
         ax.contour(biomass, levels=[contour_level], colors="white", linewidths=0.5)
+    if show_polarity_vectors and state.shape[0] >= 4:
+        skip = vector_stride
+        y, x = np.mgrid[0:biomass.shape[0]:skip, 0:biomass.shape[1]:skip]
+        ax.quiver(
+            x,
+            y,
+            state[3][::skip, ::skip],
+            state[2][::skip, ::skip],
+            color="cyan",
+            alpha=0.6,
+            scale=40,
+            width=0.002,
+        )
     if metrics:
-        text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items())
+        text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items() if isinstance(v, (int, float)))
         ax.set_title(f"t={idx} | {text}", fontsize=8)
     return im
 
@@ -71,6 +93,9 @@ def render_frames(
     overlay_delta: bool = True,
     snapshot_name: str = "organism_snapshot.png",
     video_name: str = "alien_life.mp4",
+    show_polarity_vectors: bool = False,
+    vector_stride: int = 8,
+    species_labels: list[int] | None = None,
 ) -> Path:
     """Render a sequence of CA states to an MP4 (GIF fallback).
 
@@ -90,9 +115,11 @@ def render_frames(
     out_dir.mkdir(parents=True, exist_ok=True)
     frames = []
     metrics_iter = list(metric_history) if metric_history else [None] * len(states)
+    if species_labels is None:
+        species_labels = [None] * len(states)
     fig, ax = plt.subplots(figsize=(6, 6), dpi=140)
     prev = None
-    for idx, (state, metric) in enumerate(zip(states, metrics_iter)):
+    for idx, (state, metric, species_color) in enumerate(zip(states, metrics_iter, species_labels)):
         _frame_overlay(
             ax,
             state,
@@ -104,6 +131,9 @@ def render_frames(
             contour_level=contour_level,
             prev_state=prev,
             overlay_delta=overlay_delta,
+            show_polarity_vectors=show_polarity_vectors,
+            vector_stride=vector_stride,
+            species_color=species_color,
         )
         frame_path = out_dir / f"frame_{idx:04d}.png"
         fig.savefig(frame_path, bbox_inches="tight")
