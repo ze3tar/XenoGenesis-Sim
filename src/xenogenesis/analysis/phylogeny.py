@@ -63,6 +63,8 @@ def build_lineage_graph(run_dir: Path):
             fitness=entry.get("fitness", {}),
             genome=list(genome_vec),
             phenotype=list(phenotype_vec),
+            birth_step=entry.get("birth_step"),
+            death_step=entry.get("death_step"),
         )
         for parent in entry.get("parents", []) or []:
             g.add_edge(parent, node_id)

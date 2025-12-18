@@ -15,7 +15,7 @@ from xenogenesis.core.rng import make_rng
 from xenogenesis.engine.checkpointing import load_checkpoint
 from xenogenesis.engine.metrics import save_metrics
 from xenogenesis.substrates.ca import CAStepper, ca_fitness, render_frames
-from xenogenesis.substrates.ca.genome import Genome, decode, phenotype_summary, CAParams, params_from_config
+from xenogenesis.substrates.ca.genome import Genome, decode, phenotype_summary, CAParams, params_from_config, mutate
 from xenogenesis.substrates.ca.fitness import _components
 from xenogenesis.substrates.softbody import VoxelMorphology, Controller, softbody_fitness
 from xenogenesis.substrates.digital import InstructionGenome, digital_fitness
@@ -48,14 +48,26 @@ def run_ca(config: ConfigSchema) -> Path:
     if config.genome.enabled:
         genome = Genome.random(config.genome.length, rng)
         ca_params = decode(genome, grid_size=config.ca.grid_size, dt=config.ca.dt, base_noise=config.ca.noise_std)
+        genome_schema = {
+            "kernel_inner_radius": float(ca_params.kernel_params.rings[0][1]),
+            "kernel_outer_radius": float(ca_params.kernel_params.rings[1][1]),
+            "ring_ratio": float(abs(ca_params.kernel_params.ring_weights[1])),
+            "growth_gain": float(ca_params.growth_alpha),
+            "maintenance_cost": float(ca_params.maintenance_cost),
+            "polarity_strength": float(ca_params.polarity_gain),
+            "division_threshold": float(ca_params.division_threshold),
+            "resource_affinity": float(ca_params.resource_affinity),
+        }
         (run_dir / "genome.json").write_text(json.dumps({"genes": genome.genes.tolist(), "decoded": ca_params.as_dict()}, indent=2))
+        (run_dir / "genome_schema.json").write_text(json.dumps(genome_schema, indent=2))
         (run_dir / "phenotype_summary.json").write_text(json.dumps(phenotype_summary(ca_params), indent=2))
     else:
         genome = None
         ca_params = params_from_config(config.ca)
     biomass = rng.random((config.ca.grid_size, config.ca.grid_size), dtype=np.float32)
     resource = np.ones_like(biomass, dtype=np.float32)
-    state = np.stack((biomass, resource))
+    polarity = np.zeros_like(biomass, dtype=np.float32)
+    state = np.stack((biomass, resource, polarity, polarity))
     stepper = CAStepper()
     history: List[np.ndarray] = []
     history_full: List[np.ndarray] = []
@@ -64,8 +76,26 @@ def run_ca(config: ConfigSchema) -> Path:
     prev_component_count = 0
     reproduction_seen = 0
     prev_snapshot: np.ndarray | None = None
+    lineage_records: list[dict] = []
+    genome_archive: list[dict] = []
+    root_id = hashlib.sha1((genome.genes if genome is not None else np.array([config.seed])).tobytes()).hexdigest()[:12]
+    root_entry = {
+        "individual_id": root_id,
+        "parent_id": None,
+        "generation": 0,
+        "parents": [],
+        "fitness": {},
+        "species_id": None,
+        "phenotype_descriptor": [],
+        "genome": genome.genes.tolist() if genome is not None else [],
+        "birth_step": 0,
+        "death_step": None,
+    }
+    lineage_records.append(root_entry)
+    genome_archive.append({"id": root_id, "genome": root_entry["genome"], "parent": None, "step": 0})
     for step_idx in range(config.ca.steps):
-        state = stepper.step(state, ca_params, rng=rng)
+        result = stepper.step(state, ca_params, rng=rng)
+        state = result.state
         if step_idx % config.ca.record_interval == 0:
             snapshot_full = state.copy()
             history_full.append(snapshot_full)
@@ -77,15 +107,38 @@ def run_ca(config: ConfigSchema) -> Path:
             resource_snapshot = snapshot_full[1] if snapshot_full.shape[0] > 1 else None
             stats = _frame_stats(snapshot, resource_snapshot, elongation_trigger=ca_params.elongation_trigger)
             stats["step"] = step_idx
-            if prev_snapshot is not None:
-                delta_components = stats["component_count"] - prev_component_count
-                if delta_components > 0 and stats.get("max_elongation", 0.0) >= ca_params.elongation_trigger:
-                    reproduction_seen += delta_components
+            stats["reproduction_events_step"] = result.stats.reproduction_events
+            stats["resource_mean"] = result.stats.resource
+            reproduction_seen += result.stats.reproduction_events
             stats["reproduction_events"] = reproduction_seen
             prev_component_count = stats["component_count"]
             prev_snapshot = snapshot
             frame_metrics.append(stats)
             records.append(stats)
+            if genome is not None and result.stats.reproduction_events > 0:
+                for _ in range(result.stats.reproduction_events):
+                    child_genome = mutate(
+                        genome,
+                        rng,
+                        sigma=config.genome.mutation_sigma,
+                        structural_prob=config.genome.structural_prob,
+                    )
+                    child_id = hashlib.sha1(child_genome.genes.tobytes()).hexdigest()[:12]
+                    lineage_records.append(
+                        {
+                            "individual_id": child_id,
+                            "parent_id": root_id,
+                            "generation": step_idx,
+                            "parents": [root_id],
+                            "fitness": {},
+                            "species_id": None,
+                            "phenotype_descriptor": [],
+                            "genome": child_genome.genes.tolist(),
+                            "birth_step": step_idx,
+                            "death_step": None,
+                        }
+                    )
+                    genome_archive.append({"id": child_id, "genome": child_genome.genes.tolist(), "parent": root_id, "step": step_idx})
     fitness = ca_fitness(
         history,
         mass_threshold=config.ca.mass_threshold,
@@ -100,6 +153,7 @@ def run_ca(config: ConfigSchema) -> Path:
         buf = BytesIO()
         np.savez_compressed(buf, states=np.stack(history_full))
         (run_dir / "states.npz").write_bytes(buf.getvalue())
+    species_df = None
     if config.outputs.render:
         render_frames(
             history_full[:: config.ca.render_stride],
@@ -112,21 +166,25 @@ def run_ca(config: ConfigSchema) -> Path:
             overlay_delta=True,
             snapshot_name="organism_snapshot.png",
             video_name="alien_life.mp4",
+            show_polarity_vectors=True,
         )
-    if genome is not None:
-        lineage_id = hashlib.sha1(genome.genes.tobytes()).hexdigest()[:12]
-    else:
-        lineage_id = hashlib.sha1(str(config.seed).encode()).hexdigest()[:12]
-    lineage_entry = {
-        "individual_id": lineage_id,
-        "generation": 0,
-        "parents": [],
-        "fitness": fitness,
-        "species_id": None,
-        "phenotype_descriptor": fitness.get("descriptor", []),
-        "genome": genome.genes.tolist() if genome is not None else [],
-    }
-    (run_dir / "lineage.jsonl").write_text(json.dumps(lineage_entry) + "\n")
+    try:
+        from xenogenesis.analysis import annotate_species
+
+        species_df = annotate_species(run_dir)
+    except Exception:
+        species_df = None
+    lineage_records[0]["fitness"] = fitness
+    lineage_records[0]["phenotype_descriptor"] = fitness.get("descriptor", [])
+    lineage_records[0]["death_step"] = config.ca.steps
+    if species_df is not None and not species_df.empty:
+        dominant_species = int(species_df["species_id"].value_counts().idxmax())
+        for entry in lineage_records:
+            entry["species_id"] = dominant_species
+    for entry in lineage_records[1:]:
+        entry["death_step"] = entry.get("death_step") or config.ca.steps
+    (run_dir / "lineage.jsonl").write_text("\n".join(json.dumps(entry) for entry in lineage_records) + "\n")
+    (run_dir / "genome_archive.jsonl").write_text("\n".join(json.dumps(entry) for entry in genome_archive) + "\n")
     config_dict = config.model_dump()
     if isinstance(config_dict.get("outputs", {}).get("run_dir"), Path):
         config_dict["outputs"]["run_dir"] = str(config_dict["outputs"]["run_dir"])

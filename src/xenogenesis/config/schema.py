@@ -37,6 +37,20 @@ class CAConfig(BaseModel):
     fission_assist: float = 0.0
     mass_threshold: float = 0.05
     active_threshold: float = 0.01
+    maintenance_cost: float = 0.08
+    competition_scale: float = 0.25
+    competition_radius: float = 3.0
+    resource_capacity: float = 1.2
+    resource_gradient: float = 0.25
+    polarity_diffusion: float = 0.02
+    polarity_mutation: float = 0.02
+    directional_gain: float = 1.0
+    division_threshold: float = 0.55
+    division_fraction: float = 0.45
+    reproduction_cost: float = 0.15
+    resource_affinity: float = 0.35
+    toxin_rate: float = 0.01
+    drift_rate: float = 0.01
     gamma: float = 1.0
     contour_level: float = 0.5
     show_contours: bool = False
@@ -76,7 +90,22 @@ class CAConfig(BaseModel):
                 raise ValueError("rings must be [inner, outer] with outer>inner>=0")
         return v
 
-    @field_validator("growth_alpha", "polarity_gain", "polarity_mobility", "regen_rate", "consumption_rate")
+    @field_validator(
+        "growth_alpha",
+        "polarity_gain",
+        "polarity_mobility",
+        "regen_rate",
+        "consumption_rate",
+        "maintenance_cost",
+        "competition_scale",
+        "resource_capacity",
+        "resource_gradient",
+        "directional_gain",
+        "division_threshold",
+        "division_fraction",
+        "reproduction_cost",
+        "resource_affinity",
+    )
     @classmethod
     def validate_positive(cls, v: float) -> float:
         if v < 0:
@@ -89,6 +118,11 @@ class CAConfig(BaseModel):
         if not 0 <= v <= 1:
             raise ValueError("parameters must be within [0, 1]")
         return v
+
+    @field_validator("drift_rate", "toxin_rate", mode="before")
+    @classmethod
+    def validate_small(cls, v: float) -> float:
+        return float(v)
 
 
 class GenomeConfig(BaseModel):

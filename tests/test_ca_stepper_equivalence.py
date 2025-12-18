@@ -36,11 +36,25 @@ def test_ca_step_equivalence():
         render_gamma=1.0,
         contour_level=0.5,
         dominant_band=0,
+        maintenance_cost=0.05,
+        competition_scale=0.2,
+        competition_radius=3.0,
+        resource_capacity=1.2,
+        resource_gradient=0.2,
+        polarity_diffusion=0.02,
+        polarity_mutation=0.02,
+        directional_gain=1.0,
+        division_threshold=0.5,
+        division_fraction=0.5,
+        reproduction_cost=0.15,
+        resource_affinity=0.3,
+        toxin_rate=0.01,
+        drift_rate=0.0,
     )
     rng_a = np.random.default_rng(0)
     rng_b = np.random.default_rng(0)
-    a = stepper._step_numpy(state, ca_params, rng_a)
-    b = stepper.step(state, ca_params, rng=rng_b)
+    a = stepper._step_numpy(state, ca_params, rng_a).state
+    b = stepper.step(state, ca_params, rng=rng_b).state
     assert a.shape[0] == 4
     assert b.shape == a.shape
     assert np.allclose(a, b, atol=1e-4)
