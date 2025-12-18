@@ -15,24 +15,35 @@ ca:
   regen_rate: 0.06
   consumption_rate: 0.035
   noise_std: 0.0015
+  decay_lambda: 0.01
+  resource_diffusion: 0.08
+  biomass_diffusion: 0.03
   polarity_gain: 0.48
   polarity_decay: 0.93
   polarity_mobility: 0.085
   polarity_noise: 0.0006
   max_mass: 0.8
   death_factor: 0.45
+  elongation_trigger: 1.45
+  fission_assist: 0.12
   mass_threshold: 0.05
   active_threshold: 0.02
   gamma: 1.15
+  contour_level: 0.55
   show_contours: true
   steps: 720
   record_interval: 2
   render_stride: 1
   render_cmap: inferno
   novelty_enabled: false
+genome:
+  enabled: true
+  length: 24
+  mutation_sigma: 0.08
+  structural_prob: 0.08
 evolution:
-  population: 48
-  generations: 30
+  population: 12
+  generations: 10
   selection: nsga2
   mutation_rate: 0.12
   workers: 4

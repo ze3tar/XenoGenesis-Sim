@@ -17,6 +17,7 @@ def _frame_overlay(
     *,
     gamma: float = 1.0,
     show_contours: bool = False,
+    contour_level: float = 0.5,
     prev_state: np.ndarray | None = None,
     overlay_delta: bool = False,
 ):
@@ -50,7 +51,7 @@ def _frame_overlay(
     if polarity_mag is not None:
         ax.imshow(polarity_mag, cmap="twilight", alpha=0.25, vmin=0, vmax=1)
     if show_contours:
-        ax.contour(biomass, levels=[0.5], colors="white", linewidths=0.5)
+        ax.contour(biomass, levels=[contour_level], colors="white", linewidths=0.5)
     if metrics:
         text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items())
         ax.set_title(f"t={idx} | {text}", fontsize=8)
@@ -65,6 +66,7 @@ def render_frames(
     fps: int = 24,
     gamma: float = 1.0,
     show_contours: bool = False,
+    contour_level: float = 0.5,
     metric_history: Iterable[Mapping[str, float]] | None = None,
     overlay_delta: bool = True,
     snapshot_name: str = "organism_snapshot.png",
@@ -99,6 +101,7 @@ def render_frames(
             cmap,
             gamma=gamma,
             show_contours=show_contours,
+            contour_level=contour_level,
             prev_state=prev,
             overlay_delta=overlay_delta,
         )
