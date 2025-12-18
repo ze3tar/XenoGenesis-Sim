@@ -51,6 +51,14 @@ def _get_networkx():
 def build_lineage_graph(run_dir: Path):
     nx = _get_networkx()
     data = _load_lineage(run_dir)
+    events_path = run_dir / "lineage_events.jsonl"
+    event_log = []
+    if events_path.exists():
+        for line in events_path.read_text().strip().splitlines():
+            try:
+                event_log.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     g = nx.DiGraph()
     for entry in data:
         node_id = entry.get("individual_id")
@@ -68,6 +76,19 @@ def build_lineage_graph(run_dir: Path):
         )
         for parent in entry.get("parents", []) or []:
             g.add_edge(parent, node_id)
+    for ev in event_log:
+        tid = ev.get("track_id")
+        parent = ev.get("parent_id")
+        if tid is None:
+            continue
+        if tid not in g:
+            g.add_node(tid, generation=ev.get("step", 0), species_id=None, fitness={}, genome=[], phenotype=[], birth_step=ev.get("step"), death_step=None)
+        if ev.get("event") == "death":
+            g.nodes[tid]["death_step"] = ev.get("step")
+        if parent:
+            if parent not in g:
+                g.add_node(parent, generation=ev.get("step", 0), species_id=None, fitness={}, genome=[], phenotype=[], birth_step=None, death_step=None)
+            g.add_edge(parent, tid)
     return g
 
 

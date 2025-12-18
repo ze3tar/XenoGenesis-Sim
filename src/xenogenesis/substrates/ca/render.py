@@ -96,6 +96,7 @@ def render_frames(
     show_polarity_vectors: bool = False,
     vector_stride: int = 8,
     species_labels: list[int] | None = None,
+    multi_panel: bool = False,
 ) -> Path:
     """Render a sequence of CA states to an MP4 (GIF fallback).
 
@@ -117,24 +118,67 @@ def render_frames(
     metrics_iter = list(metric_history) if metric_history else [None] * len(states)
     if species_labels is None:
         species_labels = [None] * len(states)
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=140)
+    if multi_panel:
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4), dpi=140)
+    else:
+        fig, ax = plt.subplots(figsize=(6, 6), dpi=140)
     prev = None
     for idx, (state, metric, species_color) in enumerate(zip(states, metrics_iter, species_labels)):
-        _frame_overlay(
-            ax,
-            state,
-            idx,
-            metric,
-            cmap,
-            gamma=gamma,
-            show_contours=show_contours,
-            contour_level=contour_level,
-            prev_state=prev,
-            overlay_delta=overlay_delta,
-            show_polarity_vectors=show_polarity_vectors,
-            vector_stride=vector_stride,
-            species_color=species_color,
-        )
+        if multi_panel:
+            biomass = state[0] if state.ndim > 2 else state
+            resource = state[1] if state.ndim > 2 and state.shape[0] > 1 else None
+            _frame_overlay(
+                axes[0],
+                state,
+                idx,
+                metric,
+                cmap,
+                gamma=gamma,
+                show_contours=show_contours,
+                contour_level=contour_level,
+                prev_state=prev,
+                overlay_delta=overlay_delta,
+                show_polarity_vectors=show_polarity_vectors,
+                vector_stride=vector_stride,
+                species_color=species_color,
+            )
+            axes[0].set_title(f"Biomass t={idx}")
+            axes[1].clear()
+            axes[1].set_axis_off()
+            if resource is not None:
+                axes[1].imshow(np.clip(resource, 0, 1) ** gamma, cmap="Greens", vmin=0, vmax=1, interpolation="bilinear")
+            else:
+                axes[1].imshow(np.zeros_like(biomass), cmap="Greens", vmin=0, vmax=1)
+            axes[1].set_title("Resource")
+            axes[2].clear()
+            axes[2].set_axis_off()
+            composite = np.clip(biomass, 0, 1) ** gamma
+            res_scaled = np.clip(resource, 0, 1) if resource is not None else np.zeros_like(composite)
+            rgb = np.dstack(
+                [
+                    composite,
+                    0.6 * res_scaled,
+                    0.5 * (composite + res_scaled),
+                ]
+            )
+            axes[2].imshow(rgb, interpolation="bilinear")
+            axes[2].set_title("Composite")
+        else:
+            _frame_overlay(
+                ax,
+                state,
+                idx,
+                metric,
+                cmap,
+                gamma=gamma,
+                show_contours=show_contours,
+                contour_level=contour_level,
+                prev_state=prev,
+                overlay_delta=overlay_delta,
+                show_polarity_vectors=show_polarity_vectors,
+                vector_stride=vector_stride,
+                species_color=species_color,
+            )
         frame_path = out_dir / f"frame_{idx:04d}.png"
         fig.savefig(frame_path, bbox_inches="tight")
         frames.append(frame_path)

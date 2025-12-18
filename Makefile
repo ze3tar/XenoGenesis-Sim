@@ -9,6 +9,9 @@ test:
 demo:
 	bash scripts/run_demo.sh
 
+ui:
+	streamlit run src/xenogenesis/ui/live_ui.py
+
 profile:
 	bash scripts/profile_ca.sh
 

@@ -59,6 +59,13 @@ class CAStepper:
         return gradient
 
     @staticmethod
+    def _ring_means(field: np.ndarray, ff: np.ndarray, ring_ffts: tuple[np.ndarray, ...]) -> list[np.ndarray]:
+        return [
+            np.fft.irfftn(ff * ring_fft, s=field.shape, axes=(0, 1)).real
+            for ring_fft in ring_ffts
+        ]
+
+    @staticmethod
     def _laplacian(field: np.ndarray) -> np.ndarray:
         return (
             -4 * field
@@ -91,19 +98,19 @@ class CAStepper:
         norm = np.linalg.norm(direction, axis=0) + 1e-6
         direction_unit = direction / norm
         grad_y, grad_x = np.gradient(biomass)
-        fallback_y = np.sign(grad_y)
-        fallback_x = np.sign(grad_x)
-        offset_y = np.rint(direction_unit[0]).astype(int)
-        offset_x = np.rint(direction_unit[1]).astype(int)
-        offset_y = np.where(offset_y == 0, fallback_y, offset_y)
-        offset_x = np.where(offset_x == 0, fallback_x, offset_x)
-        offset_y = np.clip(offset_y, -1, 1)
-        offset_x = np.clip(offset_x, -1, 1)
+        fallback_y = np.sign(grad_y).astype(np.int32)
+        fallback_x = np.sign(grad_x).astype(np.int32)
+        offset_y = np.rint(direction_unit[0]).astype(np.int32)
+        offset_x = np.rint(direction_unit[1]).astype(np.int32)
+        offset_y = np.where(offset_y == 0, fallback_y, offset_y).astype(np.int32)
+        offset_x = np.where(offset_x == 0, fallback_x, offset_x).astype(np.int32)
+        offset_y = np.clip(offset_y, -1, 1).astype(np.int32)
+        offset_x = np.clip(offset_x, -1, 1).astype(np.int32)
         transfer = params.division_fraction * biomass * division_mask
         resource_cost = params.reproduction_cost * transfer
         resource = np.clip(resource - resource_cost, 0.0, params.resource_capacity)
-        target_y = (coords[0] + offset_y) % biomass.shape[0]
-        target_x = (coords[1] + offset_x) % biomass.shape[1]
+        target_y = ((coords[0] + offset_y) % biomass.shape[0]).astype(np.intp)
+        target_x = ((coords[1] + offset_x) % biomass.shape[1]).astype(np.intp)
         offspring_biomass = np.zeros_like(biomass)
         np.add.at(offspring_biomass, (target_y, target_x), transfer)
         biomass = biomass - transfer + offspring_biomass
@@ -144,11 +151,17 @@ class CAStepper:
             raise ValueError("state must be (H, W) or (C, H, W)")
 
         kernel_cache: KernelCache = kernel_bank(params.kernel_params)
-        s_fft = np.fft.rfftn(biomass)
-        activation = np.fft.irfftn(s_fft * kernel_cache.kernel_fft, s=biomass.shape, axes=(0, 1)).real
+        biomass_fft = np.fft.rfftn(biomass)
+        resource_fft = np.fft.rfftn(resource)
+        biomass_bands = self._ring_means(biomass, biomass_fft, kernel_cache.ring_ffts)
+        resource_bands = self._ring_means(resource, resource_fft, kernel_cache.ring_ffts)
+        neighborhood_biomass = sum(w * band for w, band in zip(kernel_cache.ring_weights, biomass_bands))
+        neighborhood_resource = sum(w * band for w, band in zip(kernel_cache.ring_weights, resource_bands)) if resource_bands else resource
+
+        activation = np.fft.irfftn(biomass_fft * kernel_cache.kernel_fft, s=biomass.shape, axes=(0, 1)).real
         directional = params.directional_gain * (
-            np.fft.irfftn(s_fft * kernel_cache.grad_fft[1], s=biomass.shape, axes=(0, 1)).real * polarity_x
-            + np.fft.irfftn(s_fft * kernel_cache.grad_fft[0], s=biomass.shape, axes=(0, 1)).real * polarity_y
+            np.fft.irfftn(biomass_fft * kernel_cache.grad_fft[1], s=biomass.shape, axes=(0, 1)).real * polarity_x
+            + np.fft.irfftn(biomass_fft * kernel_cache.grad_fft[0], s=biomass.shape, axes=(0, 1)).real * polarity_y
         )
         kernel_response = activation + directional
         competition_kernel_fft = np.fft.rfftn(np.abs(kernel_cache.kernel))
@@ -164,15 +177,18 @@ class CAStepper:
             polarity_x += params.polarity_diffusion * lap_px
             polarity_y += params.polarity_diffusion * lap_py
 
-        growth = np.tanh(params.growth_alpha * (kernel_response - params.maintenance_cost - competition_penalty))
-        growth_term = growth * np.clip(resource, 0.0, params.resource_capacity)
+        growth_drive = np.exp(-0.5 * ((neighborhood_biomass - params.mu) / max(params.sigma, 1e-3)) ** 2)
+        growth_drive = growth_drive * 2.0 - 1.0
+        resource_factor = np.clip(neighborhood_resource / max(params.resource_capacity, 1e-6), 0.0, 1.5)
+        growth_signal = params.growth_alpha * (growth_drive * resource_factor + kernel_response - params.maintenance_cost - competition_penalty)
+        biomass_growth = params.dt * biomass * growth_signal
 
         resource += params.regen_rate * (params.resource_capacity - resource)
         gradient = self._resource_gradient(biomass.shape)
         self._drift_phase += params.drift_rate
         drift = np.sin(self._drift_phase) * gradient
         resource += params.resource_gradient * gradient + drift
-        resource -= params.consumption_rate * np.maximum(growth_term, 0.0)
+        resource -= params.consumption_rate * np.clip(growth_signal, 0.0, None) * biomass
         resource -= params.toxin_rate * biomass
         if params.resource_diffusion > 0:
             resource += params.resource_diffusion * self._laplacian(resource)
@@ -180,7 +196,7 @@ class CAStepper:
 
         biomass_decay = params.decay_lambda * biomass
         transport = params.polarity_mobility * (polarity_x * grad_x + polarity_y * grad_y)
-        delta_biomass = params.dt * (growth_term - biomass_decay + transport)
+        delta_biomass = biomass_growth - params.dt * biomass_decay + params.dt * transport
         if params.biomass_diffusion > 0:
             delta_biomass += params.biomass_diffusion * self._laplacian(biomass)
         if params.fission_assist > 0:

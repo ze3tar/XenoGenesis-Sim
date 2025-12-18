@@ -33,6 +33,9 @@ class KernelCache:
     grad_fft: tuple[np.ndarray, np.ndarray]
     positive_mass: float
     negative_mass: float
+    ring_kernels: tuple[np.ndarray, ...]
+    ring_ffts: tuple[np.ndarray, ...]
+    ring_weights: tuple[float, ...]
 
 
 def _radial_disk(size: int, radius: float) -> np.ndarray:
@@ -47,6 +50,16 @@ def _radial_disk(size: int, radius: float) -> np.ndarray:
     return disk
 
 
+def _ring_kernel(size: int, inner: float, outer: float) -> np.ndarray:
+    outer_disk = _radial_disk(size, outer)
+    inner_disk = _radial_disk(size, inner)
+    ring = outer_disk - inner_disk
+    norm = float(ring.sum())
+    if norm > 0:
+        ring /= norm
+    return ring
+
+
 def multi_ring_kernel(size: int, rings: tuple[tuple[float, float], ...], weights: tuple[float, ...]) -> np.ndarray:
     """Construct a normalized, signed multi-ring kernel.
 
@@ -56,7 +69,7 @@ def multi_ring_kernel(size: int, rings: tuple[tuple[float, float], ...], weights
 
     kernel = np.zeros((size, size), dtype=np.float32)
     for (r_in, r_out), w in zip(rings, weights):
-        ring = _radial_disk(size, r_out) - _radial_disk(size, r_in)
+        ring = _ring_kernel(size, r_in, r_out)
         kernel += w * ring
     pos = float(kernel[kernel > 0].sum())
     neg = float(-kernel[kernel < 0].sum())
@@ -80,4 +93,15 @@ def kernel_bank(params: KernelParams) -> KernelCache:
     grad_fft = (np.fft.rfftn(grad_y), np.fft.rfftn(grad_x))
     pos = float(kernel[kernel > 0].sum())
     neg = float(-kernel[kernel < 0].sum())
-    return KernelCache(kernel=kernel, kernel_fft=kernel_fft, grad_fft=grad_fft, positive_mass=pos, negative_mass=neg)
+    ring_kernels = tuple(_ring_kernel(params.size, r_in, r_out) for r_in, r_out in params.rings)
+    ring_ffts = tuple(np.fft.rfftn(rk) for rk in ring_kernels)
+    return KernelCache(
+        kernel=kernel,
+        kernel_fft=kernel_fft,
+        grad_fft=grad_fft,
+        positive_mass=pos,
+        negative_mass=neg,
+        ring_kernels=ring_kernels,
+        ring_ffts=ring_ffts,
+        ring_weights=params.ring_weights,
+    )
