@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Iterable
 import numpy as np
 
@@ -333,3 +334,460 @@ def params_from_config(ca_cfg) -> CAParams:
         toxin_rate=getattr(ca_cfg, "toxin_rate", 0.01),
         drift_rate=getattr(ca_cfg, "drift_rate", 0.01),
     )
+
+
+# --- Structured genome schema -------------------------------------------------
+
+
+def _normalize_weights(weights: Iterable[float]) -> tuple[float, ...]:
+    weights_arr = np.asarray(list(weights), dtype=np.float32)
+    if np.allclose(weights_arr, 0):
+        weights_arr[:] = 1.0 / max(len(weights_arr), 1)
+    weights_arr /= np.sum(np.abs(weights_arr))
+    return tuple(float(w) for w in weights_arr)
+
+
+STRUCTURED_BOUNDS: dict[str, tuple[float, float]] = {
+    "kernel.inner": (1.0, 10.0),
+    "kernel.outer": (2.5, 24.0),
+    "kernel.ring_ratio": (0.2, 0.95),
+    "growth.mu": (-0.5, 0.6),
+    "growth.sigma": (0.1, 5.0),
+    "growth.alpha": (0.1, 2.5),
+    "growth.decay": (0.0, 0.2),
+    "metabolism.regen_rate": (0.01, 0.2),
+    "metabolism.consumption_rate": (0.0, 0.5),
+    "metabolism.resource_diffusion": (0.0, 0.5),
+    "metabolism.biomass_diffusion": (0.0, 0.3),
+    "motility.polarity_gain": (0.01, 2.0),
+    "motility.polarity_decay": (0.8, 0.999),
+    "motility.polarity_mobility": (0.01, 0.6),
+    "motility.polarity_noise": (0.0, 0.05),
+    "division.division_threshold": (0.1, 0.95),
+    "division.division_fraction": (0.1, 0.9),
+    "division.elongation_trigger": (1.0, 4.0),
+    "division.reproduction_cost": (0.01, 0.45),
+    "environment_response.toxicity_resistance": (0.0, 1.0),
+    "environment_response.resource_affinity": (0.0, 1.0),
+    "environment_response.drift_sensitivity": (0.0, 0.08),
+}
+
+
+def _bounded_mutation(val: float, rng: np.random.Generator, *, key: str, sigma: float) -> float:
+    lo, hi = STRUCTURED_BOUNDS[key]
+    scale = (hi - lo) * sigma
+    mutated = float(val + rng.normal(0.0, scale))
+    return float(np.clip(mutated, lo, hi))
+
+
+def _normalized_distance(a: float, b: float, *, key: str) -> float:
+    lo, hi = STRUCTURED_BOUNDS[key]
+    scale = hi - lo
+    if scale <= 0:
+        return 0.0
+    return (a - b) / scale
+
+
+@dataclass(frozen=True)
+class KernelSection:
+    inner: float
+    outer: float
+    weights: tuple[float, float, float]
+    ring_ratio: float
+
+    def to_dict(self) -> dict:
+        return {
+            "rings": [self.inner, self.outer],
+            "weights": list(self.weights),
+            "ring_ratio": self.ring_ratio,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "KernelSection":
+        inner, outer = data.get("rings", [2.0, 6.0])
+        weights = data.get("weights", [1.0, -0.5, 0.2])
+        ring_ratio = data.get("ring_ratio", 0.5)
+        weights = weights if len(weights) >= 3 else list(weights) + [0.25 + 0.15 * ring_ratio]
+        return cls(inner=float(inner), outer=float(outer), weights=_normalize_weights(weights[:3]), ring_ratio=float(ring_ratio))
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "KernelSection":
+        inner = rng.uniform(*STRUCTURED_BOUNDS["kernel.inner"])
+        outer = max(inner + 0.5, rng.uniform(*STRUCTURED_BOUNDS["kernel.outer"]))
+        ring_ratio = rng.uniform(*STRUCTURED_BOUNDS["kernel.ring_ratio"])
+        weights = _normalize_weights([1.0, -ring_ratio, 0.25 + 0.15 * ring_ratio])
+        return cls(inner=inner, outer=outer, weights=weights, ring_ratio=ring_ratio)
+
+    def mutate(self, rng: np.random.Generator, sigma: float) -> "KernelSection":
+        inner = _bounded_mutation(self.inner, rng, key="kernel.inner", sigma=sigma)
+        outer = _bounded_mutation(self.outer, rng, key="kernel.outer", sigma=sigma)
+        outer = max(outer, inner + 0.25)
+        ring_ratio = _bounded_mutation(self.ring_ratio, rng, key="kernel.ring_ratio", sigma=sigma)
+        mutated_weights = [np.clip(w + rng.normal(0.0, sigma), -2.0, 2.0) for w in self.weights]
+        return KernelSection(inner=inner, outer=outer, weights=_normalize_weights(mutated_weights), ring_ratio=ring_ratio)
+
+    def distance(self, other: "KernelSection") -> float:
+        dist = _normalized_distance(self.inner, other.inner, key="kernel.inner") ** 2
+        dist += _normalized_distance(self.outer, other.outer, key="kernel.outer") ** 2
+        dist += _normalized_distance(self.ring_ratio, other.ring_ratio, key="kernel.ring_ratio") ** 2
+        weight_diff = np.linalg.norm(np.asarray(self.weights) - np.asarray(other.weights))
+        dist += (weight_diff / len(self.weights)) ** 2
+        return dist
+
+
+@dataclass(frozen=True)
+class GrowthSection:
+    mu: float
+    sigma: float
+    alpha: float
+    decay: float
+
+    def to_dict(self) -> dict:
+        return {"mu": self.mu, "sigma": self.sigma, "alpha": self.alpha, "decay": self.decay}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "GrowthSection":
+        return cls(
+            mu=float(data.get("mu", 0.0)),
+            sigma=float(data.get("sigma", 1.0)),
+            alpha=float(data.get("alpha", 1.0)),
+            decay=float(data.get("decay", 0.05)),
+        )
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "GrowthSection":
+        return cls(
+            mu=rng.uniform(*STRUCTURED_BOUNDS["growth.mu"]),
+            sigma=rng.uniform(*STRUCTURED_BOUNDS["growth.sigma"]),
+            alpha=rng.uniform(*STRUCTURED_BOUNDS["growth.alpha"]),
+            decay=rng.uniform(*STRUCTURED_BOUNDS["growth.decay"]),
+        )
+
+    def mutate(self, rng: np.random.Generator, sigma: float) -> "GrowthSection":
+        return GrowthSection(
+            mu=_bounded_mutation(self.mu, rng, key="growth.mu", sigma=sigma),
+            sigma=_bounded_mutation(self.sigma, rng, key="growth.sigma", sigma=sigma),
+            alpha=_bounded_mutation(self.alpha, rng, key="growth.alpha", sigma=sigma),
+            decay=_bounded_mutation(self.decay, rng, key="growth.decay", sigma=sigma),
+        )
+
+    def distance(self, other: "GrowthSection") -> float:
+        return sum(
+            _normalized_distance(getattr(self, field), getattr(other, field), key=f"growth.{field}") ** 2
+            for field in ("mu", "sigma", "alpha", "decay")
+        )
+
+
+@dataclass(frozen=True)
+class MetabolismSection:
+    regen_rate: float
+    consumption_rate: float
+    resource_diffusion: float
+    biomass_diffusion: float
+
+    def to_dict(self) -> dict:
+        return {
+            "regen_rate": self.regen_rate,
+            "consumption_rate": self.consumption_rate,
+            "resource_diffusion": self.resource_diffusion,
+            "biomass_diffusion": self.biomass_diffusion,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MetabolismSection":
+        return cls(
+            regen_rate=float(data.get("regen_rate", 0.05)),
+            consumption_rate=float(data.get("consumption_rate", 0.1)),
+            resource_diffusion=float(data.get("resource_diffusion", 0.1)),
+            biomass_diffusion=float(data.get("biomass_diffusion", 0.05)),
+        )
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "MetabolismSection":
+        return cls(
+            regen_rate=rng.uniform(*STRUCTURED_BOUNDS["metabolism.regen_rate"]),
+            consumption_rate=rng.uniform(*STRUCTURED_BOUNDS["metabolism.consumption_rate"]),
+            resource_diffusion=rng.uniform(*STRUCTURED_BOUNDS["metabolism.resource_diffusion"]),
+            biomass_diffusion=rng.uniform(*STRUCTURED_BOUNDS["metabolism.biomass_diffusion"]),
+        )
+
+    def mutate(self, rng: np.random.Generator, sigma: float) -> "MetabolismSection":
+        return MetabolismSection(
+            regen_rate=_bounded_mutation(self.regen_rate, rng, key="metabolism.regen_rate", sigma=sigma),
+            consumption_rate=_bounded_mutation(self.consumption_rate, rng, key="metabolism.consumption_rate", sigma=sigma),
+            resource_diffusion=_bounded_mutation(self.resource_diffusion, rng, key="metabolism.resource_diffusion", sigma=sigma),
+            biomass_diffusion=_bounded_mutation(self.biomass_diffusion, rng, key="metabolism.biomass_diffusion", sigma=sigma),
+        )
+
+    def distance(self, other: "MetabolismSection") -> float:
+        return sum(
+            _normalized_distance(getattr(self, field), getattr(other, field), key=f"metabolism.{field}") ** 2
+            for field in ("regen_rate", "consumption_rate", "resource_diffusion", "biomass_diffusion")
+        )
+
+
+@dataclass(frozen=True)
+class MotilitySection:
+    polarity_gain: float
+    polarity_decay: float
+    polarity_mobility: float
+    polarity_noise: float
+
+    def to_dict(self) -> dict:
+        return {
+            "polarity_gain": self.polarity_gain,
+            "polarity_decay": self.polarity_decay,
+            "polarity_mobility": self.polarity_mobility,
+            "polarity_noise": self.polarity_noise,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MotilitySection":
+        return cls(
+            polarity_gain=float(data.get("polarity_gain", 1.0)),
+            polarity_decay=float(data.get("polarity_decay", 0.95)),
+            polarity_mobility=float(data.get("polarity_mobility", 0.2)),
+            polarity_noise=float(data.get("polarity_noise", 0.01)),
+        )
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "MotilitySection":
+        return cls(
+            polarity_gain=rng.uniform(*STRUCTURED_BOUNDS["motility.polarity_gain"]),
+            polarity_decay=rng.uniform(*STRUCTURED_BOUNDS["motility.polarity_decay"]),
+            polarity_mobility=rng.uniform(*STRUCTURED_BOUNDS["motility.polarity_mobility"]),
+            polarity_noise=rng.uniform(*STRUCTURED_BOUNDS["motility.polarity_noise"]),
+        )
+
+    def mutate(self, rng: np.random.Generator, sigma: float) -> "MotilitySection":
+        return MotilitySection(
+            polarity_gain=_bounded_mutation(self.polarity_gain, rng, key="motility.polarity_gain", sigma=sigma),
+            polarity_decay=_bounded_mutation(self.polarity_decay, rng, key="motility.polarity_decay", sigma=sigma),
+            polarity_mobility=_bounded_mutation(self.polarity_mobility, rng, key="motility.polarity_mobility", sigma=sigma),
+            polarity_noise=_bounded_mutation(self.polarity_noise, rng, key="motility.polarity_noise", sigma=sigma),
+        )
+
+    def distance(self, other: "MotilitySection") -> float:
+        return sum(
+            _normalized_distance(getattr(self, field), getattr(other, field), key=f"motility.{field}") ** 2
+            for field in ("polarity_gain", "polarity_decay", "polarity_mobility", "polarity_noise")
+        )
+
+
+@dataclass(frozen=True)
+class DivisionSection:
+    division_threshold: float
+    division_fraction: float
+    elongation_trigger: float
+    reproduction_cost: float
+
+    def to_dict(self) -> dict:
+        return {
+            "division_threshold": self.division_threshold,
+            "division_fraction": self.division_fraction,
+            "elongation_trigger": self.elongation_trigger,
+            "reproduction_cost": self.reproduction_cost,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DivisionSection":
+        return cls(
+            division_threshold=float(data.get("division_threshold", 0.5)),
+            division_fraction=float(data.get("division_fraction", 0.5)),
+            elongation_trigger=float(data.get("elongation_trigger", 1.5)),
+            reproduction_cost=float(data.get("reproduction_cost", 0.15)),
+        )
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "DivisionSection":
+        return cls(
+            division_threshold=rng.uniform(*STRUCTURED_BOUNDS["division.division_threshold"]),
+            division_fraction=rng.uniform(*STRUCTURED_BOUNDS["division.division_fraction"]),
+            elongation_trigger=rng.uniform(*STRUCTURED_BOUNDS["division.elongation_trigger"]),
+            reproduction_cost=rng.uniform(*STRUCTURED_BOUNDS["division.reproduction_cost"]),
+        )
+
+    def mutate(self, rng: np.random.Generator, sigma: float) -> "DivisionSection":
+        return DivisionSection(
+            division_threshold=_bounded_mutation(self.division_threshold, rng, key="division.division_threshold", sigma=sigma),
+            division_fraction=_bounded_mutation(self.division_fraction, rng, key="division.division_fraction", sigma=sigma),
+            elongation_trigger=_bounded_mutation(self.elongation_trigger, rng, key="division.elongation_trigger", sigma=sigma),
+            reproduction_cost=_bounded_mutation(self.reproduction_cost, rng, key="division.reproduction_cost", sigma=sigma),
+        )
+
+    def distance(self, other: "DivisionSection") -> float:
+        return sum(
+            _normalized_distance(getattr(self, field), getattr(other, field), key=f"division.{field}") ** 2
+            for field in ("division_threshold", "division_fraction", "elongation_trigger", "reproduction_cost")
+        )
+
+
+@dataclass(frozen=True)
+class EnvironmentSection:
+    toxicity_resistance: float
+    resource_affinity: float
+    drift_sensitivity: float
+
+    def to_dict(self) -> dict:
+        return {
+            "toxicity_resistance": self.toxicity_resistance,
+            "resource_affinity": self.resource_affinity,
+            "drift_sensitivity": self.drift_sensitivity,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EnvironmentSection":
+        return cls(
+            toxicity_resistance=float(data.get("toxicity_resistance", 0.5)),
+            resource_affinity=float(data.get("resource_affinity", 0.5)),
+            drift_sensitivity=float(data.get("drift_sensitivity", 0.02)),
+        )
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "EnvironmentSection":
+        return cls(
+            toxicity_resistance=rng.uniform(*STRUCTURED_BOUNDS["environment_response.toxicity_resistance"]),
+            resource_affinity=rng.uniform(*STRUCTURED_BOUNDS["environment_response.resource_affinity"]),
+            drift_sensitivity=rng.uniform(*STRUCTURED_BOUNDS["environment_response.drift_sensitivity"]),
+        )
+
+    def mutate(self, rng: np.random.Generator, sigma: float) -> "EnvironmentSection":
+        return EnvironmentSection(
+            toxicity_resistance=_bounded_mutation(self.toxicity_resistance, rng, key="environment_response.toxicity_resistance", sigma=sigma),
+            resource_affinity=_bounded_mutation(self.resource_affinity, rng, key="environment_response.resource_affinity", sigma=sigma),
+            drift_sensitivity=_bounded_mutation(self.drift_sensitivity, rng, key="environment_response.drift_sensitivity", sigma=sigma),
+        )
+
+    def distance(self, other: "EnvironmentSection") -> float:
+        return sum(
+            _normalized_distance(getattr(self, field), getattr(other, field), key=f"environment_response.{field}") ** 2
+            for field in ("toxicity_resistance", "resource_affinity", "drift_sensitivity")
+        )
+
+
+@dataclass(frozen=True)
+class StructuredGenome:
+    """Versioned structured genome compatible with the Lenia-like CA."""
+
+    kernel: KernelSection
+    growth: GrowthSection
+    metabolism: MetabolismSection
+    motility: MotilitySection
+    division: DivisionSection
+    environment_response: EnvironmentSection
+    version: str = "v1"
+
+    def to_dict(self) -> dict:
+        return {
+            "version": self.version,
+            "kernel": self.kernel.to_dict(),
+            "growth": self.growth.to_dict(),
+            "metabolism": self.metabolism.to_dict(),
+            "motility": self.motility.to_dict(),
+            "division": self.division.to_dict(),
+            "environment_response": self.environment_response.to_dict(),
+        }
+
+    def to_json(self, *, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StructuredGenome":
+        return cls(
+            kernel=KernelSection.from_dict(data.get("kernel", {})),
+            growth=GrowthSection.from_dict(data.get("growth", {})),
+            metabolism=MetabolismSection.from_dict(data.get("metabolism", {})),
+            motility=MotilitySection.from_dict(data.get("motility", {})),
+            division=DivisionSection.from_dict(data.get("division", {})),
+            environment_response=EnvironmentSection.from_dict(data.get("environment_response", {})),
+            version=data.get("version", "v1"),
+        )
+
+    @classmethod
+    def from_json(cls, text: str) -> "StructuredGenome":
+        return cls.from_dict(json.loads(text))
+
+    @classmethod
+    def random(cls, rng: np.random.Generator) -> "StructuredGenome":
+        return cls(
+            kernel=KernelSection.random(rng),
+            growth=GrowthSection.random(rng),
+            metabolism=MetabolismSection.random(rng),
+            motility=MotilitySection.random(rng),
+            division=DivisionSection.random(rng),
+            environment_response=EnvironmentSection.random(rng),
+        )
+
+    def mutate(self, rng: np.random.Generator, *, sigma: float = 0.05) -> "StructuredGenome":
+        return StructuredGenome(
+            kernel=self.kernel.mutate(rng, sigma),
+            growth=self.growth.mutate(rng, sigma),
+            metabolism=self.metabolism.mutate(rng, sigma),
+            motility=self.motility.mutate(rng, sigma),
+            division=self.division.mutate(rng, sigma),
+            environment_response=self.environment_response.mutate(rng, sigma),
+            version=self.version,
+        )
+
+    def distance(self, other: "StructuredGenome") -> float:
+        if self.version != other.version:
+            return float("inf")
+        dist = 0.0
+        dist += self.kernel.distance(other.kernel)
+        dist += self.growth.distance(other.growth)
+        dist += self.metabolism.distance(other.metabolism)
+        dist += self.motility.distance(other.motility)
+        dist += self.division.distance(other.division)
+        dist += self.environment_response.distance(other.environment_response)
+        return float(np.sqrt(dist))
+
+    def to_ca_params(self, *, grid_size: int, dt: float, base_noise: float = 0.002) -> CAParams:
+        tertiary_radius = self.kernel.outer * (1.0 + 0.35 * self.kernel.ring_ratio)
+        rings = (
+            (0.0, self.kernel.inner),
+            (self.kernel.inner, self.kernel.outer),
+            (self.kernel.outer, tertiary_radius),
+        )
+        ring_weights = _normalize_weights(self.kernel.weights)
+        kernel_params = KernelParams(size=grid_size, rings=rings, ring_weights=ring_weights)
+        dominant_band = int(np.argmax(np.abs(ring_weights)))
+        toxin_rate = max(0.0, 1.0 - self.environment_response.toxicity_resistance)
+        return CAParams(
+            grid_size=grid_size,
+            kernel_params=kernel_params,
+            mu=self.growth.mu,
+            sigma=self.growth.sigma,
+            dt=dt,
+            growth_alpha=self.growth.alpha,
+            decay_lambda=self.growth.decay,
+            regen_rate=self.metabolism.regen_rate,
+            consumption_rate=self.metabolism.consumption_rate,
+            resource_diffusion=self.metabolism.resource_diffusion,
+            biomass_diffusion=self.metabolism.biomass_diffusion,
+            noise_std=base_noise,
+            polarity_gain=self.motility.polarity_gain,
+            polarity_decay=self.motility.polarity_decay,
+            polarity_mobility=self.motility.polarity_mobility,
+            polarity_noise=self.motility.polarity_noise,
+            max_mass=1.0,
+            death_factor=0.05,
+            elongation_trigger=self.division.elongation_trigger,
+            fission_assist=0.0,
+            render_gamma=1.0,
+            contour_level=0.5,
+            dominant_band=dominant_band,
+            maintenance_cost=max(0.01, self.metabolism.consumption_rate * 0.5),
+            competition_scale=0.25,
+            competition_radius=3.0,
+            resource_capacity=1.2,
+            resource_gradient=self.environment_response.resource_affinity,
+            polarity_diffusion=0.05,
+            polarity_mutation=0.02,
+            directional_gain=max(0.1, self.motility.polarity_gain * 0.5),
+            division_threshold=self.division.division_threshold,
+            division_fraction=self.division.division_fraction,
+            reproduction_cost=self.division.reproduction_cost,
+            resource_affinity=self.environment_response.resource_affinity,
+            toxin_rate=toxin_rate,
+            drift_rate=self.environment_response.drift_sensitivity,
+        )
