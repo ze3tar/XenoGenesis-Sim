@@ -86,23 +86,23 @@ class CAStepper:
         division_mask = (biomass > params.division_threshold) & (resource > params.resource_affinity)
         if not np.any(division_mask):
             return biomass, resource, polarity_x, polarity_y, 0
-        coords = np.indices(biomass.shape)
+        yy, xx = np.indices(biomass.shape, dtype=np.int32)
         direction = np.stack((polarity_y, polarity_x))
         norm = np.linalg.norm(direction, axis=0) + 1e-6
         direction_unit = direction / norm
         grad_y, grad_x = np.gradient(biomass)
         fallback_y = np.sign(grad_y)
         fallback_x = np.sign(grad_x)
-        offset_y = np.rint(direction_unit[0]).astype(int)
-        offset_x = np.rint(direction_unit[1]).astype(int)
+        offset_y = np.rint(direction_unit[0]).astype(np.int32)
+        offset_x = np.rint(direction_unit[1]).astype(np.int32)
         offset_y = np.where(offset_y == 0, fallback_y, offset_y)
         offset_x = np.where(offset_x == 0, fallback_x, offset_x)
-        offset_y = np.clip(offset_y, -1, 1)
-        offset_x = np.clip(offset_x, -1, 1)
-        transfer = params.division_fraction * biomass * division_mask
+        offset_y = np.clip(offset_y, -1, 1).astype(np.int32)
+        offset_x = np.clip(offset_x, -1, 1).astype(np.int32)
+        transfer = np.clip(params.division_fraction * biomass * division_mask, 0.0, biomass)
         biomass = np.maximum(biomass - transfer - params.reproduction_cost * division_mask, 0.0)
-        target_y = (coords[0] + offset_y) % biomass.shape[0]
-        target_x = (coords[1] + offset_x) % biomass.shape[1]
+        target_y = (yy + offset_y) % biomass.shape[0]
+        target_x = (xx + offset_x) % biomass.shape[1]
         offspring_biomass = np.zeros_like(biomass)
         np.add.at(offspring_biomass, (target_y, target_x), transfer)
         biomass = biomass + offspring_biomass
@@ -189,6 +189,9 @@ class CAStepper:
         biomass = biomass + delta_biomass
         high_density = biomass > params.max_mass
         biomass[high_density] *= params.death_factor
+
+        # Enforce non-negative biomass before reproduction to preserve mass semantics.
+        biomass = np.clip(biomass, 0.0, params.max_mass)
 
         biomass, resource, polarity_x, polarity_y, reproduction_events = self._anisotropic_reproduction(
             biomass, resource, polarity_x, polarity_y, params, rng
