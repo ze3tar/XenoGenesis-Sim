@@ -50,6 +50,10 @@ def test_ca_step_equivalence():
         resource_affinity=0.3,
         toxin_rate=0.01,
         drift_rate=0.0,
+        split_threshold=0.5,
+        split_gain=0.0,
+        motility_gain=0.0,
+        death_threshold=0.01,
     )
     rng_a = np.random.default_rng(0)
     rng_b = np.random.default_rng(0)

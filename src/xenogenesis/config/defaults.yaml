@@ -3,7 +3,9 @@ environment:
   gravity: 9.81
   temperature: 295.0
   radiation: 0.05
-  resource_regen: 0.05
+  resource_regen: 0.01
+  resource_diffusion: 0.15
+  resource_cap: 1.0
 ca:
   grid_size: 128
   mu: 0.15
@@ -40,6 +42,10 @@ ca:
   resource_affinity: 0.32
   toxin_rate: 0.01
   drift_rate: 0.01
+  split_threshold: 0.52
+  split_gain: 0.6
+  motility_gain: 0.2
+  death_threshold: 0.02
   mass_threshold: 0.05
   active_threshold: 0.02
   gamma: 1.2
@@ -52,7 +58,7 @@ ca:
   novelty_enabled: false
 genome:
   enabled: true
-  length: 24
+  length: 36
   mutation_sigma: 0.08
   structural_prob: 0.07
 evolution:

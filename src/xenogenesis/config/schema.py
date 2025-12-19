@@ -10,7 +10,9 @@ class EnvironmentConfig(BaseModel):
     gravity: float = 9.81
     temperature: float = 288.0
     radiation: float = 0.1
-    resource_regen: float = 0.05
+    resource_regen: float = 0.01
+    resource_diffusion: float = 0.15
+    resource_cap: float = 1.0
 
 
 class CAConfig(BaseModel):
@@ -51,6 +53,10 @@ class CAConfig(BaseModel):
     resource_affinity: float = 0.35
     toxin_rate: float = 0.01
     drift_rate: float = 0.01
+    split_threshold: float = 0.5
+    split_gain: float = 0.6
+    motility_gain: float = 0.2
+    death_threshold: float = 0.02
     gamma: float = 1.0
     contour_level: float = 0.5
     show_contours: bool = False
@@ -105,6 +111,10 @@ class CAConfig(BaseModel):
         "division_fraction",
         "reproduction_cost",
         "resource_affinity",
+        "split_threshold",
+        "split_gain",
+        "motility_gain",
+        "death_threshold",
     )
     @classmethod
     def validate_positive(cls, v: float) -> float:
@@ -127,7 +137,7 @@ class CAConfig(BaseModel):
 
 class GenomeConfig(BaseModel):
     enabled: bool = False
-    length: int = 24
+    length: int = 36
     mutation_sigma: float = 0.05
     structural_prob: float = 0.05
 

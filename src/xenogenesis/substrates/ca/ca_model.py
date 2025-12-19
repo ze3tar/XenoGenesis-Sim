@@ -165,6 +165,11 @@ class CAStepper:
 
         growth_signal = kernel_response - params.maintenance_cost - competition_penalty
         growth = params.growth_alpha * np.tanh(growth_signal / max(params.sigma, 1e-6))
+        curvature = self._laplacian(biomass)
+        split_force = np.clip(curvature, 0.0, None)
+        if params.split_gain > 0:
+            split_mask = biomass > params.split_threshold
+            growth -= split_force * params.split_gain * split_mask
         resource_factor = np.clip(resource / params.resource_capacity, 0.0, 1.0)
         growth_term = growth * biomass * resource_factor
 
@@ -181,7 +186,14 @@ class CAStepper:
 
         biomass_decay = params.decay_lambda * biomass
         transport = params.polarity_mobility * (polarity_x * grad_x + polarity_y * grad_y)
-        delta_biomass = params.dt * (growth_term - biomass_decay + transport)
+        res_grad_y, res_grad_x = np.gradient(resource)
+        normal_mag = np.hypot(grad_x, grad_y) + 1e-6
+        normal_x = grad_x / normal_mag
+        normal_y = grad_y / normal_mag
+        directional_growth = res_grad_x * normal_x + res_grad_y * normal_y
+        anisotropic_term = params.motility_gain * directional_growth
+
+        delta_biomass = params.dt * (growth_term - biomass_decay + transport + anisotropic_term)
         if params.biomass_diffusion > 0:
             delta_biomass += params.biomass_diffusion * self._laplacian(biomass)
         if params.fission_assist > 0:
@@ -189,6 +201,13 @@ class CAStepper:
         biomass = biomass + delta_biomass
         high_density = biomass > params.max_mass
         biomass[high_density] *= params.death_factor
+
+        energy_signal = growth_term - params.maintenance_cost * biomass - biomass_decay
+        death_mask = (biomass < params.death_threshold) | (energy_signal < 0)
+        if np.any(death_mask):
+            biomass = np.where(death_mask, 0.0, biomass)
+            polarity_x = np.where(death_mask, 0.0, polarity_x)
+            polarity_y = np.where(death_mask, 0.0, polarity_y)
 
         # Enforce non-negative biomass before reproduction to preserve mass semantics.
         biomass = np.clip(biomass, 0.0, params.max_mass)

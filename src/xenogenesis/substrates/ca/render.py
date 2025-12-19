@@ -7,6 +7,40 @@ import numpy as np
 import matplotlib.pyplot as plt
 import ffmpeg
 
+from .fitness import _components
+
+
+def _track_components(states: list[np.ndarray], threshold: float = 0.12, match_radius: float = 6.0) -> list[list[dict]]:
+    """Assign persistent IDs to connected biomass regions across frames."""
+
+    tracks: dict[int, np.ndarray] = {}
+    next_id = 1
+    annotations: list[list[dict]] = []
+    for state in states:
+        biomass = state[0] if state.ndim > 2 else state
+        comps = _components(biomass, threshold)
+        frame_ann: list[dict] = []
+        used_tracks: set[int] = set()
+        for comp in comps:
+            centroid = comp["centroid"]
+            best_id = None
+            best_dist = 1e9
+            for tid, prev_centroid in tracks.items():
+                dist = float(np.linalg.norm(prev_centroid - centroid))
+                if dist < best_dist and dist <= match_radius and tid not in used_tracks:
+                    best_id = tid
+                    best_dist = dist
+            if best_id is None:
+                best_id = next_id
+                next_id += 1
+            tracks[best_id] = centroid
+            used_tracks.add(best_id)
+            frame_ann.append({"id": best_id, "centroid": centroid, "color": best_id})
+        # Remove tracks that were not matched to keep IDs responsive to deaths
+        tracks = {tid: tracks[tid] for tid in used_tracks}
+        annotations.append(frame_ann)
+    return annotations
+
 
 def _frame_overlay(
     ax,
@@ -23,6 +57,8 @@ def _frame_overlay(
     show_polarity_vectors: bool = False,
     vector_stride: int = 8,
     species_color: int | None = None,
+    membrane_threshold: float = 0.08,
+    components: list[dict] | None = None,
 ):
     ax.clear()
     ax.set_axis_off()
@@ -43,7 +79,9 @@ def _frame_overlay(
     vmax = float(np.percentile(biomass, 99))
     if np.isclose(vmin, vmax):
         vmin, vmax = 0.0, 1.0
-    img = biomass ** gamma
+    compressed = np.log1p(np.clip(biomass - vmin, 0.0, None))
+    compressed_max = np.max(compressed) + 1e-6
+    img = (compressed / compressed_max) ** gamma
     if species_color is not None:
         base_cmap = plt.get_cmap("tab20")
         tint = base_cmap(species_color % base_cmap.N)
@@ -59,6 +97,10 @@ def _frame_overlay(
         ax.imshow(resource, cmap="Greens", alpha=0.25, vmin=0, vmax=1)
     if polarity_mag is not None:
         ax.imshow(polarity_mag, cmap="twilight", alpha=0.25, vmin=0, vmax=1)
+    grad_mag = np.hypot(*np.gradient(biomass))
+    membrane = grad_mag > membrane_threshold
+    if np.any(membrane):
+        ax.imshow(np.where(membrane, 1.0, np.nan), cmap="gray", alpha=0.4, vmin=0, vmax=1)
     if show_contours:
         ax.contour(biomass, levels=[contour_level], colors="white", linewidths=0.5)
     if show_polarity_vectors and state.shape[0] >= 4:
@@ -74,6 +116,23 @@ def _frame_overlay(
             scale=40,
             width=0.002,
         )
+    if components:
+        cmap_obj = plt.get_cmap("tab20")
+        for comp in components:
+            cy, cx = comp["centroid"]
+            tint = cmap_obj(comp["color"] % cmap_obj.N)
+            ax.scatter([cx], [cy], c=[tint], s=8, edgecolor="white", linewidth=0.3, zorder=5)
+            ax.text(
+                cx,
+                cy,
+                str(comp["id"]),
+                color="white",
+                fontsize=6,
+                ha="center",
+                va="center",
+                zorder=6,
+                bbox=dict(boxstyle="round,pad=0.1", facecolor=(tint[0], tint[1], tint[2], 0.4), linewidth=0.2),
+            )
     if metrics:
         text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items() if isinstance(v, (int, float)))
         ax.set_title(f"t={idx} | {text}", fontsize=8)
@@ -96,6 +155,8 @@ def render_frames(
     show_polarity_vectors: bool = False,
     vector_stride: int = 8,
     species_labels: list[int] | None = None,
+    membrane_threshold: float = 0.08,
+    track_ids: bool = True,
 ) -> Path:
     """Render a sequence of CA states to an MP4 (GIF fallback).
 
@@ -117,9 +178,10 @@ def render_frames(
     metrics_iter = list(metric_history) if metric_history else [None] * len(states)
     if species_labels is None:
         species_labels = [None] * len(states)
+    component_tracks = _track_components(states) if track_ids else [None] * len(states)
     fig, ax = plt.subplots(figsize=(6, 6), dpi=140)
     prev = None
-    for idx, (state, metric, species_color) in enumerate(zip(states, metrics_iter, species_labels)):
+    for idx, (state, metric, species_color, comps) in enumerate(zip(states, metrics_iter, species_labels, component_tracks)):
         _frame_overlay(
             ax,
             state,
@@ -134,6 +196,8 @@ def render_frames(
             show_polarity_vectors=show_polarity_vectors,
             vector_stride=vector_stride,
             species_color=species_color,
+            membrane_threshold=membrane_threshold,
+            components=comps,
         )
         frame_path = out_dir / f"frame_{idx:04d}.png"
         fig.savefig(frame_path, bbox_inches="tight")
