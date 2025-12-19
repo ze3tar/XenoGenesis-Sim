@@ -86,27 +86,26 @@ class CAStepper:
         division_mask = (biomass > params.division_threshold) & (resource > params.resource_affinity)
         if not np.any(division_mask):
             return biomass, resource, polarity_x, polarity_y, 0
-        coords = np.indices(biomass.shape)
+        yy, xx = np.indices(biomass.shape, dtype=np.int32)
         direction = np.stack((polarity_y, polarity_x))
         norm = np.linalg.norm(direction, axis=0) + 1e-6
         direction_unit = direction / norm
         grad_y, grad_x = np.gradient(biomass)
         fallback_y = np.sign(grad_y)
         fallback_x = np.sign(grad_x)
-        offset_y = np.rint(direction_unit[0]).astype(int)
-        offset_x = np.rint(direction_unit[1]).astype(int)
+        offset_y = np.rint(direction_unit[0]).astype(np.int32)
+        offset_x = np.rint(direction_unit[1]).astype(np.int32)
         offset_y = np.where(offset_y == 0, fallback_y, offset_y)
         offset_x = np.where(offset_x == 0, fallback_x, offset_x)
-        offset_y = np.clip(offset_y, -1, 1)
-        offset_x = np.clip(offset_x, -1, 1)
-        transfer = params.division_fraction * biomass * division_mask
-        resource_cost = params.reproduction_cost * transfer
-        resource = np.clip(resource - resource_cost, 0.0, params.resource_capacity)
-        target_y = (coords[0] + offset_y) % biomass.shape[0]
-        target_x = (coords[1] + offset_x) % biomass.shape[1]
+        offset_y = np.clip(offset_y, -1, 1).astype(np.int32)
+        offset_x = np.clip(offset_x, -1, 1).astype(np.int32)
+        transfer = np.clip(params.division_fraction * biomass * division_mask, 0.0, biomass)
+        biomass = np.maximum(biomass - transfer - params.reproduction_cost * division_mask, 0.0)
+        target_y = (yy + offset_y) % biomass.shape[0]
+        target_x = (xx + offset_x) % biomass.shape[1]
         offspring_biomass = np.zeros_like(biomass)
         np.add.at(offspring_biomass, (target_y, target_x), transfer)
-        biomass = biomass - transfer + offspring_biomass
+        biomass = biomass + offspring_biomass
 
         offspring_px = np.zeros_like(polarity_x)
         offspring_py = np.zeros_like(polarity_y)
@@ -164,8 +163,10 @@ class CAStepper:
             polarity_x += params.polarity_diffusion * lap_px
             polarity_y += params.polarity_diffusion * lap_py
 
-        growth = np.tanh(params.growth_alpha * (kernel_response - params.maintenance_cost - competition_penalty))
-        growth_term = growth * np.clip(resource, 0.0, params.resource_capacity)
+        growth_signal = kernel_response - params.maintenance_cost - competition_penalty
+        growth = params.growth_alpha * np.tanh(growth_signal / max(params.sigma, 1e-6))
+        resource_factor = np.clip(resource / params.resource_capacity, 0.0, 1.0)
+        growth_term = growth * biomass * resource_factor
 
         resource += params.regen_rate * (params.resource_capacity - resource)
         gradient = self._resource_gradient(biomass.shape)
@@ -189,6 +190,9 @@ class CAStepper:
         high_density = biomass > params.max_mass
         biomass[high_density] *= params.death_factor
 
+        # Enforce non-negative biomass before reproduction to preserve mass semantics.
+        biomass = np.clip(biomass, 0.0, params.max_mass)
+
         biomass, resource, polarity_x, polarity_y, reproduction_events = self._anisotropic_reproduction(
             biomass, resource, polarity_x, polarity_y, params, rng
         )
@@ -196,10 +200,12 @@ class CAStepper:
         biomass += rng.normal(0, params.noise_std, biomass.shape)
         polarity_x += rng.normal(0, params.polarity_noise, biomass.shape)
         polarity_y += rng.normal(0, params.polarity_noise, biomass.shape)
-        biomass = np.clip(biomass, 0.0, 1.0)
+
+        # HARD biological constraints
+        biomass = np.clip(biomass, 0.0, params.max_mass)
+        resource = np.clip(resource, 0.0, params.resource_capacity)
         polarity_x = np.clip(polarity_x, -1.0, 1.0)
         polarity_y = np.clip(polarity_y, -1.0, 1.0)
-        resource = np.clip(resource, 0.0, params.resource_capacity)
 
         stats = StepStats(
             mass=float(biomass.mean()),
