@@ -3,7 +3,9 @@ environment:
   gravity: 9.81
   temperature: 295.0
   radiation: 0.05
-  resource_regen: 0.06
+  resource_regen: 0.01
+  resource_diffusion: 0.15
+  resource_cap: 1.0
 ca:
   grid_size: 192
   mu: 0.12
@@ -12,11 +14,11 @@ ca:
   dt: 0.05
   rings: [[1.2, 3.4], [3.4, 8.5], [8.5, 13.5]]
   ring_weights: [1.0, -0.9, 0.3]
-  regen_rate: 0.06
-  consumption_rate: 0.032
+  regen_rate: 0.02
+  consumption_rate: 0.028
   noise_std: 0.001
   decay_lambda: 0.008
-  resource_diffusion: 0.08
+  resource_diffusion: 0.12
   biomass_diffusion: 0.03
   polarity_gain: 0.6
   polarity_decay: 0.93
@@ -29,7 +31,7 @@ ca:
   maintenance_cost: 0.07
   competition_scale: 0.32
   competition_radius: 3.2
-  resource_capacity: 1.3
+  resource_capacity: 1.0
   resource_gradient: 0.35
   polarity_diffusion: 0.025
   polarity_mutation: 0.022
@@ -40,6 +42,10 @@ ca:
   resource_affinity: 0.3
   toxin_rate: 0.015
   drift_rate: 0.008
+  split_threshold: 0.55
+  split_gain: 0.65
+  motility_gain: 0.25
+  death_threshold: 0.025
   mass_threshold: 0.05
   active_threshold: 0.02
   gamma: 1.15
@@ -52,7 +58,7 @@ ca:
   novelty_enabled: false
 genome:
   enabled: true
-  length: 32
+  length: 36
   mutation_sigma: 0.08
   structural_prob: 0.1
 evolution:

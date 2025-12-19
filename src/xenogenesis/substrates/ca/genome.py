@@ -50,6 +50,10 @@ class CAParams:
     resource_affinity: float
     toxin_rate: float
     drift_rate: float
+    split_threshold: float
+    split_gain: float
+    motility_gain: float
+    death_threshold: float
 
     def as_dict(self) -> dict:
         return {
@@ -94,6 +98,10 @@ class CAParams:
             "resource_affinity": self.resource_affinity,
             "toxin_rate": self.toxin_rate,
             "drift_rate": self.drift_rate,
+            "split_threshold": self.split_threshold,
+            "split_gain": self.split_gain,
+            "motility_gain": self.motility_gain,
+            "death_threshold": self.death_threshold,
         }
 
 
@@ -161,6 +169,10 @@ def decode(genome: Genome, *, grid_size: int, dt: float, base_noise: float = 0.0
     resource_capacity = _scale(g[29] if g.shape[0] > 29 else 0.0, 1.0, 1.5)
     toxin_rate = _scale(g[30] if g.shape[0] > 30 else 0.0, 0.0, 0.25)
     drift_rate = _scale(g[31] if g.shape[0] > 31 else 0.0, 0.0, 0.05)
+    split_threshold = _scale(g[32] if g.shape[0] > 32 else division_threshold, 0.2, 0.95)
+    split_gain = _scale(g[33] if g.shape[0] > 33 else 0.0, 0.0, 1.6)
+    motility_gain = _scale(g[34] if g.shape[0] > 34 else polarity_mobility, 0.0, 0.8)
+    death_threshold = _scale(g[35] if g.shape[0] > 35 else 0.0, 0.0, 0.12)
 
     dominant_band = int(np.argmax(np.abs(weights)))
 
@@ -202,6 +214,10 @@ def decode(genome: Genome, *, grid_size: int, dt: float, base_noise: float = 0.0
         resource_affinity=resource_affinity,
         toxin_rate=toxin_rate,
         drift_rate=drift_rate,
+        split_threshold=split_threshold,
+        split_gain=split_gain,
+        motility_gain=motility_gain,
+        death_threshold=death_threshold,
     )
 
 
@@ -333,6 +349,10 @@ def params_from_config(ca_cfg) -> CAParams:
         resource_affinity=getattr(ca_cfg, "resource_affinity", 0.35),
         toxin_rate=getattr(ca_cfg, "toxin_rate", 0.01),
         drift_rate=getattr(ca_cfg, "drift_rate", 0.01),
+        split_threshold=getattr(ca_cfg, "split_threshold", getattr(ca_cfg, "division_threshold", 0.5)),
+        split_gain=getattr(ca_cfg, "split_gain", 0.5),
+        motility_gain=getattr(ca_cfg, "motility_gain", 0.2),
+        death_threshold=getattr(ca_cfg, "death_threshold", 0.02),
     )
 
 
