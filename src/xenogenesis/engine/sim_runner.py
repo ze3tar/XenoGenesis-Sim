@@ -171,7 +171,7 @@ def run_ca(config: ConfigSchema) -> Path:
     try:
         from xenogenesis.analysis import annotate_species
 
-        species_df = annotate_species(run_dir)
+        species_df = annotate_species(run_dir, frame_stride=max(config.ca.render_stride, 2), max_frames=400)
     except Exception:
         species_df = None
     lineage_records[0]["fitness"] = fitness

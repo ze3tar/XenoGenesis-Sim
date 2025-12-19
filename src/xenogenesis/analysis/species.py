@@ -113,12 +113,23 @@ def _assign_tracks(tracks: list[OrganismTrack], comps: list[dict], frame_idx: in
     return tracks
 
 
-def extract_organism_descriptors(run_dir: Path) -> pd.DataFrame:
-    states = _load_states(run_dir)
+def extract_organism_descriptors(
+    run_dir: Path,
+    *,
+    states: np.ndarray | None = None,
+    frame_stride: int = 1,
+    max_frames: int | None = None,
+) -> pd.DataFrame:
+    states = states if states is not None else _load_states(run_dir)
     metrics_path = run_dir / "metrics.csv"
     metrics_df = pd.read_csv(metrics_path) if metrics_path.exists() else pd.DataFrame()
     if states is None:
         return pd.DataFrame()
+
+    if frame_stride > 1:
+        states = states[::frame_stride]
+    if max_frames is not None:
+        states = states[:max_frames]
 
     tracks: list[OrganismTrack] = []
     resource_series: list[float] = []
@@ -238,11 +249,22 @@ def _render_gallery(run_dir: Path, states: np.ndarray, df: pd.DataFrame):
         plt.close(fig)
 
 
-def annotate_species(run_dir: Path):
+def annotate_species(
+    run_dir: Path,
+    *,
+    frame_stride: int = 2,
+    max_frames: int | None = 400,
+):
     states = _load_states(run_dir)
     if states is None:
         return None
-    df = extract_organism_descriptors(run_dir)
+    if states.size == 0:
+        return None
+    if frame_stride > 1:
+        states = states[::frame_stride]
+    if max_frames is not None:
+        states = states[:max_frames]
+    df = extract_organism_descriptors(run_dir, states=states)
     df = cluster_species(df)
     summary = species_summary(df)
     (run_dir / "species.csv").write_text(df.to_csv(index=False))

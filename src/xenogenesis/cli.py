@@ -60,10 +60,12 @@ def analyze(
     run: Path = typer.Option(..., help="Run directory"),
     species: bool = typer.Option(False, help="Run species classification"),
     phylogeny: bool = typer.Option(False, help="Render phylogeny"),
+    frame_stride: int = typer.Option(2, help="Stride to subsample frames for species analysis"),
+    max_frames: int = typer.Option(400, help="Maximum frames to inspect for species analysis"),
 ):
     plot_metrics(run)
     if species:
-        annotate_species(run)
+        annotate_species(run, frame_stride=frame_stride, max_frames=max_frames)
     if phylogeny:
         run_phylogeny_pipeline(run)
     write_report(run)
