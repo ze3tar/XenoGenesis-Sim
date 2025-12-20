@@ -1,6 +1,7 @@
 """Rendering helpers for CA grids."""
 from __future__ import annotations
 from pathlib import Path
+import logging
 import shutil
 from typing import Iterable, Mapping
 import numpy as np
@@ -8,6 +9,33 @@ import matplotlib.pyplot as plt
 import ffmpeg
 
 from .fitness import _components
+
+
+def _gaussian_smooth(image: np.ndarray, sigma: float | None) -> np.ndarray:
+    """Lightweight Gaussian smoothing without depending on SciPy.
+
+    The filter is only used for visualization, so we favor a small kernel and
+    reflection padding to keep edges stable. When ``sigma`` is zero or ``None``
+    the input is returned unchanged.
+    """
+
+    if sigma is None or sigma <= 0:
+        return image
+    radius = max(1, int(3 * sigma))
+    kernel_axis = np.arange(-radius, radius + 1, dtype=np.float32)
+    kernel_1d = np.exp(-(kernel_axis ** 2) / (2 * float(sigma) ** 2))
+    kernel = np.outer(kernel_1d, kernel_1d)
+    kernel /= float(kernel.sum()) + 1e-8
+    padded = np.pad(image, radius, mode="reflect")
+    # Sliding window view creates a (H, W, k, k) tensor; multiply then sum.
+    windows = np.lib.stride_tricks.sliding_window_view(
+        padded, (kernel.shape[0], kernel.shape[1])
+    )
+    smoothed = np.sum(windows * kernel, axis=(-2, -1))
+    return smoothed.astype(image.dtype, copy=False)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _track_components(states: list[np.ndarray], threshold: float = 0.12, match_radius: float = 6.0) -> list[list[dict]]:
@@ -59,6 +87,10 @@ def _frame_overlay(
     species_color: int | None = None,
     membrane_threshold: float = 0.08,
     components: list[dict] | None = None,
+    smooth_sigma: float | None = None,
+    show_metrics: bool = True,
+    metric_keys: Iterable[str] | None = None,
+    show_ids: bool = True,
 ):
     ax.clear()
     ax.set_axis_off()
@@ -75,6 +107,11 @@ def _frame_overlay(
             polarity_mag = np.clip(np.abs(state[2]), 0.0, 1.0)
         else:
             polarity_mag = None
+    biomass = _gaussian_smooth(biomass, smooth_sigma)
+    resource = _gaussian_smooth(resource, smooth_sigma) if resource is not None else None
+    polarity_mag = (
+        _gaussian_smooth(polarity_mag, smooth_sigma) if polarity_mag is not None else None
+    )
     vmin = float(np.percentile(biomass, 1))
     vmax = float(np.percentile(biomass, 99))
     if np.isclose(vmin, vmax):
@@ -121,21 +158,24 @@ def _frame_overlay(
         for comp in components:
             cy, cx = comp["centroid"]
             tint = cmap_obj(comp["color"] % cmap_obj.N)
-            ax.scatter([cx], [cy], c=[tint], s=8, edgecolor="white", linewidth=0.3, zorder=5)
-            ax.text(
-                cx,
-                cy,
-                str(comp["id"]),
-                color="white",
-                fontsize=6,
-                ha="center",
-                va="center",
-                zorder=6,
-                bbox=dict(boxstyle="round,pad=0.1", facecolor=(tint[0], tint[1], tint[2], 0.4), linewidth=0.2),
-            )
-    if metrics:
-        text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items() if isinstance(v, (int, float)))
-        ax.set_title(f"t={idx} | {text}", fontsize=8)
+            ax.scatter([cx], [cy], c=[tint], s=14, edgecolor="white", linewidth=0.25, alpha=0.6, zorder=5)
+            if show_ids:
+                ax.text(
+                    cx,
+                    cy,
+                    str(comp["id"]),
+                    color="white",
+                    fontsize=6,
+                    ha="center",
+                    va="center",
+                    zorder=6,
+                    bbox=dict(boxstyle="round,pad=0.1", facecolor=(tint[0], tint[1], tint[2], 0.35), linewidth=0.2),
+                )
+    if show_metrics and metrics:
+        keys = list(metric_keys) if metric_keys is not None else list(metrics.keys())
+        filtered = [f"{k}: {metrics[k]:.3f}" for k in keys if k in metrics and isinstance(metrics[k], (int, float, np.floating))]
+        text = "  ·  ".join(filtered[:4])
+        ax.set_title(f"t={idx}" + (f"  —  {text}" if text else ""), fontsize=8, pad=4)
     return im
 
 
@@ -157,6 +197,10 @@ def render_frames(
     species_labels: list[int] | None = None,
     membrane_threshold: float = 0.08,
     track_ids: bool = True,
+    smooth_sigma: float | None = None,
+    show_metrics: bool = True,
+    metric_keys: Iterable[str] | None = None,
+    show_ids: bool = True,
 ) -> Path:
     """Render a sequence of CA states to an MP4 (GIF fallback).
 
@@ -198,6 +242,10 @@ def render_frames(
             species_color=species_color,
             membrane_threshold=membrane_threshold,
             components=comps,
+            smooth_sigma=smooth_sigma,
+            show_metrics=show_metrics,
+            metric_keys=metric_keys,
+            show_ids=show_ids,
         )
         frame_path = out_dir / f"frame_{idx:04d}.png"
         fig.savefig(frame_path, bbox_inches="tight")
@@ -209,7 +257,10 @@ def render_frames(
     mp4_path = out_dir / video_name
     snapshot_path = out_dir / snapshot_name
     if shutil.which("ffmpeg") is None:
-        raise RuntimeError("FFmpeg is required for rendering; please install it.")
+        logger.warning("FFmpeg not found; skipping video render and saving final frame only.")
+        shutil.copy(frames[-1], snapshot_path)
+        (out_dir / "render_skipped.txt").write_text("FFmpeg missing; saved last frame instead of video.")
+        return snapshot_path
     try:
         (
             ffmpeg
@@ -225,7 +276,7 @@ def render_frames(
             .run(quiet=True)
         )
         shutil.copy(frames[-1], snapshot_path)
-    except ffmpeg.Error:
+    except ffmpeg.Error as exc:
         mp4_path = out_dir / "ca.gif"
         try:
             (
@@ -235,7 +286,10 @@ def render_frames(
                 .overwrite_output()
                 .run(quiet=True)
             )
-        except ffmpeg.Error as exc:
-            raise RuntimeError("FFmpeg is required for rendering; please install it.") from exc
+        except ffmpeg.Error:
+            logger.warning("FFmpeg render failed (%s); saved final frame only.", exc)
+            shutil.copy(frames[-1], snapshot_path)
+            (out_dir / "render_failed.txt").write_text("FFmpeg failed; saved last frame instead of video.")
+            return snapshot_path
         shutil.copy(frames[-1], snapshot_path)
     return mp4_path

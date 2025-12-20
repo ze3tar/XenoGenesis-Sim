@@ -232,6 +232,8 @@ def species_summary(df: pd.DataFrame) -> dict:
 
 
 def _render_gallery(run_dir: Path, states: np.ndarray, df: pd.DataFrame):
+    if df.empty or "species_id" not in df.columns:
+        return
     gallery_dir = run_dir / "species_gallery"
     gallery_dir.mkdir(exist_ok=True)
     cmap = plt.get_cmap("magma")
@@ -269,5 +271,7 @@ def annotate_species(
     summary = species_summary(df)
     (run_dir / "species.csv").write_text(df.to_csv(index=False))
     (run_dir / "species_summary.json").write_text(json.dumps(summary, indent=2))
+    if df.empty:
+        return df
     _render_gallery(run_dir, states, df)
     return df

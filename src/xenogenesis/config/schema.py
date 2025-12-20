@@ -64,7 +64,13 @@ class CAConfig(BaseModel):
     record_interval: int = 8
     render_stride: int = 4
     render_cmap: str = "magma"
+    render_track_ids: bool = True
+    render_show_ids: bool = False
+    render_show_metrics: bool = False
+    render_metric_keys: list[str] = Field(default_factory=lambda: ["mass", "reproduction_events", "component_count", "entropy"])
+    render_smoothing: float = 0.75
     novelty_enabled: bool = False
+    progress_interval: int | None = None
 
     @field_validator("grid_size")
     @classmethod

@@ -83,7 +83,7 @@ class CAStepper:
         params: CAParams,
         rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-        division_mask = (biomass > params.division_threshold) & (resource > params.resource_affinity)
+        division_mask = ((biomass > params.division_threshold) & (resource > params.resource_affinity)).astype(bool)
         if not np.any(division_mask):
             return biomass, resource, polarity_x, polarity_y, 0
         yy, xx = np.indices(biomass.shape, dtype=np.int32)
@@ -101,8 +101,8 @@ class CAStepper:
         offset_x = np.clip(offset_x, -1, 1).astype(np.int32)
         transfer = np.clip(params.division_fraction * biomass * division_mask, 0.0, biomass)
         biomass = np.maximum(biomass - transfer - params.reproduction_cost * division_mask, 0.0)
-        target_y = (yy + offset_y) % biomass.shape[0]
-        target_x = (xx + offset_x) % biomass.shape[1]
+        target_y = ((yy + offset_y) % biomass.shape[0]).astype(np.intp)
+        target_x = ((xx + offset_x) % biomass.shape[1]).astype(np.intp)
         offspring_biomass = np.zeros_like(biomass)
         np.add.at(offspring_biomass, (target_y, target_x), transfer)
         biomass = biomass + offspring_biomass
@@ -203,7 +203,7 @@ class CAStepper:
         biomass[high_density] *= params.death_factor
 
         energy_signal = growth_term - params.maintenance_cost * biomass - biomass_decay
-        death_mask = (biomass < params.death_threshold) | (energy_signal < 0)
+        death_mask = (biomass < params.death_threshold) & (energy_signal < 0)
         if np.any(death_mask):
             biomass = np.where(death_mask, 0.0, biomass)
             polarity_x = np.where(death_mask, 0.0, polarity_x)
