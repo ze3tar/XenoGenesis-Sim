@@ -1,6 +1,7 @@
 """Rendering helpers for CA grids."""
 from __future__ import annotations
 from pathlib import Path
+import logging
 import shutil
 from typing import Iterable, Mapping
 import numpy as np
@@ -8,6 +9,9 @@ import matplotlib.pyplot as plt
 import ffmpeg
 
 from .fitness import _components
+
+
+logger = logging.getLogger(__name__)
 
 
 def _track_components(states: list[np.ndarray], threshold: float = 0.12, match_radius: float = 6.0) -> list[list[dict]]:
@@ -209,7 +213,10 @@ def render_frames(
     mp4_path = out_dir / video_name
     snapshot_path = out_dir / snapshot_name
     if shutil.which("ffmpeg") is None:
-        raise RuntimeError("FFmpeg is required for rendering; please install it.")
+        logger.warning("FFmpeg not found; skipping video render and saving final frame only.")
+        shutil.copy(frames[-1], snapshot_path)
+        (out_dir / "render_skipped.txt").write_text("FFmpeg missing; saved last frame instead of video.")
+        return snapshot_path
     try:
         (
             ffmpeg
@@ -225,7 +232,7 @@ def render_frames(
             .run(quiet=True)
         )
         shutil.copy(frames[-1], snapshot_path)
-    except ffmpeg.Error:
+    except ffmpeg.Error as exc:
         mp4_path = out_dir / "ca.gif"
         try:
             (
@@ -235,7 +242,10 @@ def render_frames(
                 .overwrite_output()
                 .run(quiet=True)
             )
-        except ffmpeg.Error as exc:
-            raise RuntimeError("FFmpeg is required for rendering; please install it.") from exc
+        except ffmpeg.Error:
+            logger.warning("FFmpeg render failed (%s); saved final frame only.", exc)
+            shutil.copy(frames[-1], snapshot_path)
+            (out_dir / "render_failed.txt").write_text("FFmpeg failed; saved last frame instead of video.")
+            return snapshot_path
         shutil.copy(frames[-1], snapshot_path)
     return mp4_path

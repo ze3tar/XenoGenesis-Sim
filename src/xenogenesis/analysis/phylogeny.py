@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING
 
@@ -10,6 +11,9 @@ import matplotlib.pyplot as plt
 
 if TYPE_CHECKING:  # pragma: no cover
     import networkx as nx
+
+
+logger = logging.getLogger(__name__)
 
 
 def _load_lineage(run_dir: Path) -> list[dict]:
@@ -84,15 +88,25 @@ def compute_branch_lengths(graph, mode: Literal["genome", "phenotype"] = "genome
 
 
 def export_graphml(graph, path: Path) -> Path:
+    nx = _get_networkx()
     serializable = graph.copy()
     for node, data in serializable.nodes(data=True):
+        for key, value in list(data.items()):
+            if value is None:
+                data[key] = "None"
         if "genome" in data:
             data["genome"] = json.dumps(data["genome"])
         if "phenotype" in data:
             data["phenotype"] = json.dumps(data["phenotype"])
         if "fitness" in data and isinstance(data["fitness"], dict):
             data["fitness"] = json.dumps(data["fitness"])
-    nx.write_graphml(serializable, path)
+    try:
+        nx.write_graphml(serializable, path)
+    except Exception as exc:  # pragma: no cover - dependency optional
+        fallback = path.with_suffix(".json")
+        fallback.write_text(json.dumps(nx.node_link_data(serializable), indent=2))
+        logger.warning("GraphML export failed (%s); wrote JSON lineage to %s", exc, fallback)
+        return fallback
     return path
 
 
