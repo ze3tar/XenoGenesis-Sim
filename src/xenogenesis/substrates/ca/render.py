@@ -11,30 +11,6 @@ import ffmpeg
 from .fitness import _components
 
 
-def _gaussian_smooth(image: np.ndarray, sigma: float | None) -> np.ndarray:
-    """Lightweight Gaussian smoothing without depending on SciPy.
-
-    The filter is only used for visualization, so we favor a small kernel and
-    reflection padding to keep edges stable. When ``sigma`` is zero or ``None``
-    the input is returned unchanged.
-    """
-
-    if sigma is None or sigma <= 0:
-        return image
-    radius = max(1, int(3 * sigma))
-    kernel_axis = np.arange(-radius, radius + 1, dtype=np.float32)
-    kernel_1d = np.exp(-(kernel_axis ** 2) / (2 * float(sigma) ** 2))
-    kernel = np.outer(kernel_1d, kernel_1d)
-    kernel /= float(kernel.sum()) + 1e-8
-    padded = np.pad(image, radius, mode="reflect")
-    # Sliding window view creates a (H, W, k, k) tensor; multiply then sum.
-    windows = np.lib.stride_tricks.sliding_window_view(
-        padded, (kernel.shape[0], kernel.shape[1])
-    )
-    smoothed = np.sum(windows * kernel, axis=(-2, -1))
-    return smoothed.astype(image.dtype, copy=False)
-
-
 logger = logging.getLogger(__name__)
 
 

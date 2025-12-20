@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import hashlib
 import os
-import math
-import time
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, Any, List
@@ -218,17 +216,13 @@ def run_ca(config: ConfigSchema) -> Path:
             metric_keys=config.ca.render_metric_keys,
             show_ids=config.ca.render_show_ids,
         )
-        console.log(f"render finished in {time.time() - render_start:.2f}s")
     if not skip_analysis:
-        console.log("annotating species from rendered frames")
         try:
             from xenogenesis.analysis import annotate_species
 
             species_df = annotate_species(run_dir, frame_stride=max(config.ca.render_stride, 2), max_frames=400)
         except Exception:
             species_df = None
-        else:
-            console.log("species annotation complete")
     lineage_records[0]["fitness"] = fitness
     lineage_records[0]["phenotype_descriptor"] = fitness.get("descriptor", [])
     lineage_records[0]["death_step"] = config.ca.steps

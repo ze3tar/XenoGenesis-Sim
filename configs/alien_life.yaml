@@ -50,16 +50,10 @@ ca:
   active_threshold: 0.006
   gamma: 1.05
   contour_level: 0.4
-  show_contours: false
+  show_contours: true
   steps: 400
-  record_interval: 6
-  render_stride: 4
-  render_track_ids: false
-  render_show_ids: false
-  render_show_metrics: false
-  render_metric_keys: [mass, reproduction_events, component_count]
-  render_smoothing: 1.1
-  progress_interval: 40
+  record_interval: 2
+  render_stride: 2
   render_cmap: inferno
   novelty_enabled: false
 genome:
