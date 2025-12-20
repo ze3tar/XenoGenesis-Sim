@@ -4,6 +4,11 @@ import importlib.util
 import importlib
 import numpy as np
 
+try:  # Prefer fast C-based connected components
+    from scipy import ndimage as ndi
+except Exception:  # pragma: no cover - optional dependency
+    ndi = None
+
 native_entropy = None
 _native_spec = importlib.util.find_spec("xenogenesis_native")
 if _native_spec:
@@ -30,6 +35,42 @@ def _center_of_mass(state: np.ndarray, threshold: float = 0.1) -> np.ndarray:
 
 def _components(state: np.ndarray, threshold: float = 0.1) -> list[dict]:
     mask = state > threshold
+    if not np.any(mask):
+        return []
+    if ndi is not None:
+        labeled, num = ndi.label(mask)
+        comps: list[dict] = []
+        slices = ndi.find_objects(labeled)
+        for label_idx, sl in enumerate(slices, start=1):
+            if sl is None:
+                continue
+            region_mask = labeled[sl] == label_idx
+            if not region_mask.any():
+                continue
+            coords = np.argwhere(region_mask)
+            # Convert to absolute coordinates within the original grid
+            coords[:, 0] += sl[0].start
+            coords[:, 1] += sl[1].start
+            masses = state[sl][region_mask]
+            centroid = (coords * masses[:, None]).sum(axis=0) / max(masses.sum(), 1e-6)
+            height = sl[0].stop - sl[0].start
+            width = sl[1].stop - sl[1].start
+            elongation = float(max(height, width) / max(min(height, width), 1.0))
+            perimeter_mask = region_mask ^ ndi.binary_erosion(region_mask)
+            perimeter = float(perimeter_mask.sum())
+            comps.append(
+                {
+                    "mass": float(masses.sum()),
+                    "area": float(region_mask.sum()),
+                    "centroid": centroid.astype(np.float32),
+                    "bbox": (height, width),
+                    "elongation": elongation,
+                    "perimeter": perimeter,
+                }
+            )
+        return comps
+
+    # Fallback: pure Python flood fill (slower but dependency-free)
     visited = np.zeros_like(mask, dtype=bool)
     h, w = mask.shape
     comps: list[dict] = []

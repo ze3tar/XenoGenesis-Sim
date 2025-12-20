@@ -108,6 +108,8 @@ def run_ca(config: ConfigSchema) -> Path:
     }
     lineage_records.append(root_entry)
     genome_archive.append({"id": root_id, "genome": root_entry["genome"], "parent": None, "step": 0})
+    progress_interval = config.ca.progress_interval or max(10, config.ca.steps // 20)
+    last_stats: dict | None = None
     for step_idx in range(config.ca.steps):
         result = stepper.step(state, ca_params, rng=rng)
         state = result.state
@@ -130,6 +132,7 @@ def run_ca(config: ConfigSchema) -> Path:
             prev_snapshot = snapshot
             frame_metrics.append(stats)
             records.append(stats)
+            last_stats = stats
             if genome is not None and result.stats.reproduction_events > 0:
                 for _ in range(result.stats.reproduction_events):
                     child_genome = mutate(
@@ -154,24 +157,49 @@ def run_ca(config: ConfigSchema) -> Path:
                         }
                     )
                     genome_archive.append({"id": child_id, "genome": child_genome.genes.tolist(), "parent": root_id, "step": step_idx})
+        if (step_idx + 1) % progress_interval == 0:
+            current = last_stats or {"mass": float(state[0].mean())}
+            console.log(
+                f"step {step_idx + 1}/{config.ca.steps} | mass={current.get('mass', 0.0):.3f} | components={prev_component_count} | reproduction={reproduction_seen}"
+            )
+    def _sample_frames(frames: list[np.ndarray], *, max_frames: int = 160) -> list[np.ndarray]:
+        if len(frames) <= max_frames:
+            return frames
+        stride = max(1, math.ceil(len(frames) / max_frames))
+        return frames[::stride]
+
+    def _shrink(frame: np.ndarray) -> np.ndarray:
+        if max(frame.shape) <= 32:
+            return frame
+        stride = 2 if max(frame.shape) <= 96 else max(2, math.ceil(max(frame.shape) / 64))
+        return frame[::stride, ::stride]
+
+    fitness_frames = [_shrink(f) for f in _sample_frames(history)]
+    console.log(f"computing CA fitness on {len(fitness_frames)} frames (source={len(history)})")
+    fitness_start = time.time()
     fitness = ca_fitness(
-        history,
+        fitness_frames,
         mass_threshold=config.ca.mass_threshold,
         active_threshold=config.ca.active_threshold,
     )
+    console.log(f"fitness computed in {time.time() - fitness_start:.2f}s")
     records.append({"step": config.ca.steps, **fitness, "seed": config.seed})
     metrics_path = run_dir / "metrics.csv"
     save_metrics(records, metrics_path)
     with open(run_dir / "best_individual.json", "w") as f:
         json.dump({"fitness": fitness}, f)
     if history_full:
+        console.log(f"saving {len(history_full)} recorded states")
         buf = BytesIO()
         np.savez_compressed(buf, states=np.stack(history_full))
         (run_dir / "states.npz").write_bytes(buf.getvalue())
     species_df = None
     if config.outputs.render:
+        render_frameset = history_full[:: config.ca.render_stride]
+        console.log(f"rendering {len(render_frameset)} frames (stride={config.ca.render_stride})")
+        render_start = time.time()
         render_frames(
-            history_full[:: config.ca.render_stride],
+            render_frameset,
             run_dir / "renders",
             cmap=config.ca.render_cmap,
             gamma=ca_params.render_gamma,
@@ -182,6 +210,11 @@ def run_ca(config: ConfigSchema) -> Path:
             snapshot_name="organism_snapshot.png",
             video_name="alien_life.mp4",
             show_polarity_vectors=True,
+            track_ids=config.ca.render_track_ids,
+            smooth_sigma=config.ca.render_smoothing,
+            show_metrics=config.ca.render_show_metrics,
+            metric_keys=config.ca.render_metric_keys,
+            show_ids=config.ca.render_show_ids,
         )
     if not skip_analysis:
         try:

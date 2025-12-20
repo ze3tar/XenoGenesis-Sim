@@ -63,6 +63,10 @@ def _frame_overlay(
     species_color: int | None = None,
     membrane_threshold: float = 0.08,
     components: list[dict] | None = None,
+    smooth_sigma: float | None = None,
+    show_metrics: bool = True,
+    metric_keys: Iterable[str] | None = None,
+    show_ids: bool = True,
 ):
     ax.clear()
     ax.set_axis_off()
@@ -79,6 +83,11 @@ def _frame_overlay(
             polarity_mag = np.clip(np.abs(state[2]), 0.0, 1.0)
         else:
             polarity_mag = None
+    biomass = _gaussian_smooth(biomass, smooth_sigma)
+    resource = _gaussian_smooth(resource, smooth_sigma) if resource is not None else None
+    polarity_mag = (
+        _gaussian_smooth(polarity_mag, smooth_sigma) if polarity_mag is not None else None
+    )
     vmin = float(np.percentile(biomass, 1))
     vmax = float(np.percentile(biomass, 99))
     if np.isclose(vmin, vmax):
@@ -125,21 +134,24 @@ def _frame_overlay(
         for comp in components:
             cy, cx = comp["centroid"]
             tint = cmap_obj(comp["color"] % cmap_obj.N)
-            ax.scatter([cx], [cy], c=[tint], s=8, edgecolor="white", linewidth=0.3, zorder=5)
-            ax.text(
-                cx,
-                cy,
-                str(comp["id"]),
-                color="white",
-                fontsize=6,
-                ha="center",
-                va="center",
-                zorder=6,
-                bbox=dict(boxstyle="round,pad=0.1", facecolor=(tint[0], tint[1], tint[2], 0.4), linewidth=0.2),
-            )
-    if metrics:
-        text = " | ".join(f"{k}: {v:.3f}" for k, v in metrics.items() if isinstance(v, (int, float)))
-        ax.set_title(f"t={idx} | {text}", fontsize=8)
+            ax.scatter([cx], [cy], c=[tint], s=14, edgecolor="white", linewidth=0.25, alpha=0.6, zorder=5)
+            if show_ids:
+                ax.text(
+                    cx,
+                    cy,
+                    str(comp["id"]),
+                    color="white",
+                    fontsize=6,
+                    ha="center",
+                    va="center",
+                    zorder=6,
+                    bbox=dict(boxstyle="round,pad=0.1", facecolor=(tint[0], tint[1], tint[2], 0.35), linewidth=0.2),
+                )
+    if show_metrics and metrics:
+        keys = list(metric_keys) if metric_keys is not None else list(metrics.keys())
+        filtered = [f"{k}: {metrics[k]:.3f}" for k in keys if k in metrics and isinstance(metrics[k], (int, float, np.floating))]
+        text = "  ·  ".join(filtered[:4])
+        ax.set_title(f"t={idx}" + (f"  —  {text}" if text else ""), fontsize=8, pad=4)
     return im
 
 
@@ -161,6 +173,10 @@ def render_frames(
     species_labels: list[int] | None = None,
     membrane_threshold: float = 0.08,
     track_ids: bool = True,
+    smooth_sigma: float | None = None,
+    show_metrics: bool = True,
+    metric_keys: Iterable[str] | None = None,
+    show_ids: bool = True,
 ) -> Path:
     """Render a sequence of CA states to an MP4 (GIF fallback).
 
@@ -202,6 +218,10 @@ def render_frames(
             species_color=species_color,
             membrane_threshold=membrane_threshold,
             components=comps,
+            smooth_sigma=smooth_sigma,
+            show_metrics=show_metrics,
+            metric_keys=metric_keys,
+            show_ids=show_ids,
         )
         frame_path = out_dir / f"frame_{idx:04d}.png"
         fig.savefig(frame_path, bbox_inches="tight")
