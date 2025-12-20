@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import hashlib
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, Any, List
@@ -42,6 +43,7 @@ def _frame_stats(state: np.ndarray, resource: np.ndarray | None = None, *, elong
 
 
 def run_ca(config: ConfigSchema) -> Path:
+    skip_analysis = os.getenv("XG_SKIP_ANALYSIS") == "1"
     rng = make_rng(config.seed)
     run_dir = Path(config.outputs.run_dir) / f"ca_{config.seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +66,20 @@ def run_ca(config: ConfigSchema) -> Path:
     else:
         genome = None
         ca_params = params_from_config(config.ca)
-    biomass = rng.random((config.ca.grid_size, config.ca.grid_size), dtype=np.float32)
+    grid_size = config.ca.grid_size
+    biomass = rng.normal(0.05, 0.02, (grid_size, grid_size)).clip(0.0, 1.0).astype(np.float32)
+    yy, xx = np.ogrid[:grid_size, :grid_size]
+    center = grid_size // 2
+    seed_radius = max(4, grid_size // 8)
+    core_mask = (yy - center) ** 2 + (xx - center) ** 2 <= seed_radius**2
+    biomass[core_mask] += 0.6
+    for _ in range(3):
+        cy = int(rng.integers(grid_size))
+        cx = int(rng.integers(grid_size))
+        radius = int(rng.integers(max(3, grid_size // 16), max(4, grid_size // 12)))
+        patch = (yy - cy) ** 2 + (xx - cx) ** 2 <= radius**2
+        biomass[patch] += rng.uniform(0.3, 0.55)
+    biomass = biomass.clip(0.0, 1.0)
     resource = np.ones_like(biomass, dtype=np.float32)
     polarity = np.zeros_like(biomass, dtype=np.float32)
     state = np.stack((biomass, resource, polarity, polarity))
@@ -168,12 +183,13 @@ def run_ca(config: ConfigSchema) -> Path:
             video_name="alien_life.mp4",
             show_polarity_vectors=True,
         )
-    try:
-        from xenogenesis.analysis import annotate_species
+    if not skip_analysis:
+        try:
+            from xenogenesis.analysis import annotate_species
 
-        species_df = annotate_species(run_dir, frame_stride=max(config.ca.render_stride, 2), max_frames=400)
-    except Exception:
-        species_df = None
+            species_df = annotate_species(run_dir, frame_stride=max(config.ca.render_stride, 2), max_frames=400)
+        except Exception:
+            species_df = None
     lineage_records[0]["fitness"] = fitness
     lineage_records[0]["phenotype_descriptor"] = fitness.get("descriptor", [])
     lineage_records[0]["death_step"] = config.ca.steps
