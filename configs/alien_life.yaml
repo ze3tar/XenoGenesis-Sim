@@ -7,7 +7,7 @@ environment:
   resource_diffusion: 0.16
   resource_cap: 1.0
 ca:
-  grid_size: 72
+  grid_size: 192
   mu: 0.12
   sigma: 0.05
   growth_alpha: 1.18
@@ -48,13 +48,17 @@ ca:
   death_threshold: 0.01
   mass_threshold: 0.02
   active_threshold: 0.006
-  gamma: 1.05
   contour_level: 0.4
   show_contours: true
   steps: 400
   record_interval: 2
-  render_stride: 2
-  render_cmap: inferno
+  gamma: 0.9
+  render_stride: 1
+  render_cmap: cividis
+  render_smoothing: 1.25
+  render_show_metrics: false
+  render_show_ids: false
+  render_track_ids: false
   novelty_enabled: false
 genome:
   enabled: true
