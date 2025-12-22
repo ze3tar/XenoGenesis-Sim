@@ -810,4 +810,8 @@ class StructuredGenome:
             resource_affinity=self.environment_response.resource_affinity,
             toxin_rate=toxin_rate,
             drift_rate=self.environment_response.drift_sensitivity,
+            split_threshold=self.division.division_threshold,
+            split_gain=0.5,
+            motility_gain=self.motility.polarity_mobility,
+            death_threshold=0.02,
         )

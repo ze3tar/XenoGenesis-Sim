@@ -10,6 +10,11 @@ STEP_ARGS=()
 if [ -n "${DEMO_STEPS:-}" ]; then
   STEP_ARGS=(--steps ${DEMO_STEPS})
 fi
+if [ "${DEMO_RENDER:-1}" = "0" ]; then
+  RENDER_FLAG=(--no-render)
+else
+  RENDER_FLAG=()
+fi
 if [ "${DEMO_ANALYZE:-0}" = "0" ]; then
   export XG_SKIP_ANALYSIS=1
 else
@@ -18,7 +23,7 @@ fi
 
 python -m xenogenesis.cli run ca \
   --config ${CONFIG_PATH} \
-  --no-render \
+  "${RENDER_FLAG[@]}" \
   "${STEP_ARGS[@]}"
 
 LATEST_RUN=$(ls -dt ${PROJECT_ROOT}/runs/* 2>/dev/null | head -n1 || true)

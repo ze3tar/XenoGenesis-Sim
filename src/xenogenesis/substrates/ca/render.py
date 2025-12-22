@@ -1,6 +1,7 @@
 """Rendering helpers for CA grids."""
 from __future__ import annotations
 from pathlib import Path
+import importlib.util
 import logging
 import shutil
 from typing import Iterable, Mapping
@@ -12,6 +13,25 @@ from .fitness import _components
 
 
 logger = logging.getLogger(__name__)
+
+
+def _gaussian_smooth(arr: np.ndarray | None, sigma: float | None) -> np.ndarray | None:
+    """Apply a light Gaussian blur when available.
+
+    Falls back to returning the input unchanged if the array is missing, the
+    requested blur is zero/None, or SciPy is unavailable in the environment.
+    """
+
+    if arr is None or sigma is None or sigma <= 0:
+        return arr
+
+    if importlib.util.find_spec("scipy") is None:
+        logger.debug("Skipping Gaussian smoothing (scipy not available).")
+        return arr
+
+    from scipy.ndimage import gaussian_filter
+
+    return gaussian_filter(arr, sigma=float(sigma), mode="nearest")
 
 
 def _track_components(states: list[np.ndarray], threshold: float = 0.12, match_radius: float = 6.0) -> list[list[dict]]:
@@ -194,14 +214,34 @@ def render_frames(
         Optional per-frame metrics to annotate the render.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    has_ffmpeg = shutil.which("ffmpeg") is not None
+    has_pillow = importlib.util.find_spec("PIL") is not None
     frames = []
     metrics_iter = list(metric_history) if metric_history else [None] * len(states)
     if species_labels is None:
         species_labels = [None] * len(states)
-    component_tracks = _track_components(states) if track_ids else [None] * len(states)
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=140)
+    frame_states = states
+    if not has_ffmpeg and has_pillow:
+        gif_stride = max(1, len(states) // 48) if states else 1
+        frame_states = states[::gif_stride]
+        metrics_iter = metrics_iter[::gif_stride]
+        species_labels = species_labels[::gif_stride]
+    elif not has_ffmpeg:
+        frame_states = states[-1:]
+        metrics_iter = metrics_iter[-1:]
+        species_labels = species_labels[-1:]
+    component_tracks = (
+        _track_components(frame_states) if track_ids else [None] * len(frame_states)
+    )
+    grid = frame_states[0].shape[-1] if frame_states else 0
+    side_inches = min(14.0, max(7.5, grid / 18.0)) if grid else 7.5
+    dpi = 180 if grid >= 160 else 150
+    vector_stride = max(6, grid // 24) if grid else 8
+    fig, ax = plt.subplots(figsize=(side_inches, side_inches), dpi=dpi)
     prev = None
-    for idx, (state, metric, species_color, comps) in enumerate(zip(states, metrics_iter, species_labels, component_tracks)):
+    for idx, (state, metric, species_color, comps) in enumerate(
+        zip(frame_states, metrics_iter, species_labels, component_tracks)
+    ):
         _frame_overlay(
             ax,
             state,
@@ -232,10 +272,29 @@ def render_frames(
         return out_dir / "empty.mp4"
     mp4_path = out_dir / video_name
     snapshot_path = out_dir / snapshot_name
-    if shutil.which("ffmpeg") is None:
-        logger.warning("FFmpeg not found; skipping video render and saving final frame only.")
+    if not has_ffmpeg:
         shutil.copy(frames[-1], snapshot_path)
-        (out_dir / "render_skipped.txt").write_text("FFmpeg missing; saved last frame instead of video.")
+        if has_pillow:
+            from PIL import Image
+
+            gif_path = out_dir / Path(video_name).with_suffix(".gif")
+            duration_ms = max(40, int(1000 / fps))
+            images = [Image.open(path) for path in frames]
+            images[0].save(
+                gif_path,
+                save_all=True,
+                append_images=images[1:],
+                loop=0,
+                duration=duration_ms,
+                optimize=True,
+            )
+            logger.warning("FFmpeg not found; saved GIF fallback instead of video.")
+            return gif_path
+
+        logger.warning("FFmpeg not found; saved final frame instead of video.")
+        (out_dir / "render_skipped.txt").write_text(
+            "FFmpeg missing; saved last frame instead of video."
+        )
         return snapshot_path
     try:
         (
